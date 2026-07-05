@@ -147,14 +147,20 @@ class TelegramNotifier
         return [$token, $chatId];
     }
 
-    public function formatMessage(string $name, string $taskName): string
+    public function formatMessage(string $name, string $taskName, string $projectTag = ''): string
     {
         $template = (string) config('telegram.message_template');
 
-        return str_replace(
+        $message = str_replace(
             ['{name}', '{task}'],
             [$name, $taskName],
             $template
         );
+
+        if ($projectTag !== '') {
+            $message .= "\n\n".$projectTag;
+        }
+
+        return $message;
     }
 }

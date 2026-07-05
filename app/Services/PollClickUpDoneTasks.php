@@ -45,7 +45,8 @@ class PollClickUpDoneTasks
             $displayName = $this->userNameResolver->resolve($email, $username);
             $fullTask = $this->clickUpClient->getTask($taskId);
             $taskName = (string) ($fullTask['name'] ?? $task['name'] ?? $taskId);
-            $message = $this->telegramNotifier->formatMessage($displayName, $taskName);
+            $projectTag = $this->clickUpClient->resolveProjectTag($fullTask);
+            $message = $this->telegramNotifier->formatMessage($displayName, $taskName, $projectTag);
             $media = $this->clickUpClient->extractMediaAttachments($fullTask['attachments'] ?? []);
 
             $this->telegramNotifier->send($message, $media);

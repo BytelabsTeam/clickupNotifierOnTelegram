@@ -35,7 +35,8 @@ class NotifyTaskDoneOnTelegram implements ShouldQueue
         $displayName = $userNameResolver->resolve($this->email, $this->username);
         $task = $clickUpClient->getTask($this->taskId);
         $taskName = (string) ($task['name'] ?? $this->taskId);
-        $message = $telegramNotifier->formatMessage($displayName, $taskName);
+        $projectTag = $clickUpClient->resolveProjectTag($task);
+        $message = $telegramNotifier->formatMessage($displayName, $taskName, $projectTag);
         $media = $clickUpClient->extractMediaAttachments($task['attachments'] ?? []);
 
         $telegramNotifier->send($message, $media);

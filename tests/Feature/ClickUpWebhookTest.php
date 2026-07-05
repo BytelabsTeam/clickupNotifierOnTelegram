@@ -77,6 +77,16 @@ class ClickUpWebhookTest extends TestCase
             'api.clickup.com/api/v2/task/abc123' => Http::response([
                 'name' => 'رفع باگ لاگین',
                 'attachments' => [],
+                'space' => ['id' => '7002367'],
+                'folder' => [
+                    'id' => '6992470',
+                    'name' => 'Telegramclient',
+                    'hidden' => false,
+                ],
+            ], 200),
+            'api.clickup.com/api/v2/space/7002367' => Http::response([
+                'id' => '7002367',
+                'name' => 'minishop',
             ], 200),
             'api.telegram.org/*' => Http::response(['ok' => true], 200),
         ]);
@@ -87,7 +97,7 @@ class ClickUpWebhookTest extends TestCase
 
         Http::assertSent(function ($request) {
             return $request->url() === 'https://api.telegram.org/bot123456:telegram-token/sendMessage'
-                && $request['text'] === 'عارف تسک "رفع باگ لاگین" رو انجام داد ✅';
+                && $request['text'] === "عارف تسک \"رفع باگ لاگین\" رو انجام داد ✅\n\n#minishop_Telegramclient";
         });
     }
 
@@ -122,6 +132,16 @@ class ClickUpWebhookTest extends TestCase
                         'deleted' => false,
                     ],
                 ],
+                'space' => ['id' => '7002367'],
+                'folder' => [
+                    'id' => '6992470',
+                    'name' => 'Telegramclient',
+                    'hidden' => false,
+                ],
+            ], 200),
+            'api.clickup.com/api/v2/space/7002367' => Http::response([
+                'id' => '7002367',
+                'name' => 'minishop',
             ], 200),
             'api.telegram.org/*' => Http::response(['ok' => true], 200),
         ]);
@@ -133,7 +153,7 @@ class ClickUpWebhookTest extends TestCase
         Http::assertSent(function ($request) {
             return $request->url() === 'https://api.telegram.org/bot123456:telegram-token/sendPhoto'
                 && $request['photo'] === 'https://attachments.clickup.com/screenshot.png'
-                && $request['caption'] === 'عارف تسک "رفع باگ لاگین" رو انجام داد ✅';
+                && $request['caption'] === "عارف تسک \"رفع باگ لاگین\" رو انجام داد ✅\n\n#minishop_Telegramclient";
         });
     }
 

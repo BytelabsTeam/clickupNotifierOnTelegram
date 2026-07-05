@@ -39,6 +39,20 @@ class TelegramNotifierTest extends TestCase
         });
     }
 
+    public function test_it_appends_project_tag_below_message(): void
+    {
+        config([
+            'telegram.message_template' => '{name} تسک "{task}" رو انجام داد ✅',
+        ]);
+
+        $message = app(TelegramNotifier::class)->formatMessage('عارف', 'رفع باگ', '#minishop_Telegramclient');
+
+        $this->assertSame(
+            "عارف تسک \"رفع باگ\" رو انجام داد ✅\n\n#minishop_Telegramclient",
+            $message
+        );
+    }
+
     public function test_it_sends_multiple_photos_as_media_group(): void
     {
         Http::fake([

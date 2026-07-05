@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 class ClickUpClient
@@ -30,6 +31,68 @@ class ClickUpClient
         $task = $this->getTask($taskId);
 
         return (string) ($task['name'] ?? $taskId);
+    }
+
+    public function resolveProjectTag(array $task): string
+    {
+        $space = $task['space'] ?? null;
+        $spaceId = is_array($space) ? (string) ($space['id'] ?? '') : '';
+
+        if ($spaceId === '') {
+            return '';
+        }
+
+        $spaceName = $this->getSpaceName($spaceId);
+
+        if ($spaceName === '') {
+            return '';
+        }
+
+        $tag = $this->sanitizeHashtagPart($spaceName);
+        $folderName = $this->resolveFolderName($task);
+
+        if ($folderName !== '') {
+            $tag .= '_'.$this->sanitizeHashtagPart($folderName);
+        }
+
+        return '#'.$tag;
+    }
+
+    private function resolveFolderName(array $task): string
+    {
+        $folder = $task['folder'] ?? null;
+
+        if (! is_array($folder) || ($folder['hidden'] ?? false)) {
+            return '';
+        }
+
+        return trim((string) ($folder['name'] ?? ''));
+    }
+
+    private function getSpaceName(string $spaceId): string
+    {
+        return Cache::remember(
+            "clickup:space:{$spaceId}:name",
+            now()->addDays(7),
+            function () use ($spaceId): string {
+                $token = $this->requireApiToken();
+
+                $response = Http::withHeaders(['Authorization' => $token])
+                    ->acceptJson()
+                    ->get("https://api.clickup.com/api/v2/space/{$spaceId}");
+
+                $response->throw();
+
+                $name = $response->json('name');
+
+                return is_string($name) ? $name : '';
+            }
+        );
+    }
+
+    private function sanitizeHashtagPart(string $name): string
+    {
+        return str_replace([' ', '#'], '', trim($name));
     }
 
     /**
