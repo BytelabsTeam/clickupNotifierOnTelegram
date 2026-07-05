@@ -1,0 +1,21 @@
+<IfModule mod_rewrite.c>
+    <IfModule mod_negotiation.c>
+        Options -MultiViews -Indexes
+    </IfModule>
+
+    RewriteEngine On
+
+    # Leave /public/ URLs untouched
+    RewriteRule ^public/ - [L]
+
+    # Serve static files from public/ when they exist there
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond public/%{REQUEST_URI} -f
+    RewriteRule ^(.+)$ public/$1 [L]
+
+    # All other requests → root index.php (fixes subdirectory routing on cPanel)
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [L]
+</IfModule>
