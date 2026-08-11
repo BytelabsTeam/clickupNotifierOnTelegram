@@ -164,15 +164,36 @@ class ClickUpClient
      */
     public function getTasksUpdatedSince(int $updatedAfterMs): array
     {
-        $token = $this->requireApiToken();
-        $teamId = $this->requireTeamId();
-
-        $query = [
+        return $this->getTeamTasks([
             'include_closed' => 'true',
             'date_updated_gt' => $updatedAfterMs,
             'order_by' => 'updated',
             'subtasks' => 'true',
-        ];
+        ]);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function getTasksDueBetween(int $dueDateGtMs, int $dueDateLtMs): array
+    {
+        return $this->getTeamTasks([
+            'include_closed' => 'false',
+            'due_date_gt' => $dueDateGtMs,
+            'due_date_lt' => $dueDateLtMs,
+            'order_by' => 'due_date',
+            'subtasks' => 'true',
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $query
+     * @return list<array<string, mixed>>
+     */
+    private function getTeamTasks(array $query): array
+    {
+        $token = $this->requireApiToken();
+        $teamId = $this->requireTeamId();
 
         if ($listId = config('clickup.list_id')) {
             $query['list_ids[]'] = (int) $listId;
