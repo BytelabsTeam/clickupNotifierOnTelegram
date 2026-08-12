@@ -17,16 +17,26 @@ class NotifyTomorrowTasks
     }
 
     /**
-     * @return array{sent: bool, people: int, tasks: int}
+     * @return array{sent: bool, people: int, tasks: int, fetched: int, due_from: ?string, due_to: string, timezone: string}
      */
     public function notify(): array
     {
-        [$startMs, $endMs] = $this->tomorrowBoundsMs();
-        $tasks = $this->clickUpClient->getTasksDueBetween($startMs, $endMs);
+        $timezone = (string) config('app.timezone', 'UTC');
+        $tomorrow = Carbon::now($timezone)->addDay();
+        $dueBeforeMs = $tomorrow->copy()->endOfDay()->getTimestampMs() + 1;
+        $rawTasks = $this->clickUpClient->getOpenTasksDueBefore($dueBeforeMs);
+        $tasks = $this->filterTasksDueThroughTomorrow($rawTasks, $timezone);
         $grouped = $this->groupTasksByAssignee($tasks);
 
+        $meta = [
+            'fetched' => count($rawTasks),
+            'due_from' => null,
+            'due_to' => $tomorrow->copy()->endOfDay()->toIso8601String(),
+            'timezone' => $timezone,
+        ];
+
         if ($grouped === []) {
-            return ['sent' => false, 'people' => 0, 'tasks' => 0];
+            return ['sent' => false, 'people' => 0, 'tasks' => 0, ...$meta];
         }
 
         $message = $this->formatMessage($grouped);
@@ -41,21 +51,30 @@ class NotifyTomorrowTasks
             'sent' => true,
             'people' => count($grouped),
             'tasks' => $taskCount,
+            ...$meta,
         ];
     }
 
     /**
-     * @return array{0: int, 1: int}
+     * Keep open tasks whose due date is on or before tomorrow in the app timezone.
+     * Overdue tasks (yesterday and earlier) are included; day-after-tomorrow is excluded.
+     *
+     * @param  list<array<string, mixed>>  $tasks
+     * @return list<array<string, mixed>>
      */
-    private function tomorrowBoundsMs(): array
+    private function filterTasksDueThroughTomorrow(array $tasks, string $timezone): array
     {
-        // ClickUp due_date_gt / due_date_lt are exclusive, so pad by 1ms for a full day.
-        $tomorrow = Carbon::now()->addDay();
+        $tomorrow = Carbon::now($timezone)->addDay()->toDateString();
 
-        return [
-            $tomorrow->copy()->startOfDay()->getTimestampMs() - 1,
-            $tomorrow->copy()->endOfDay()->getTimestampMs() + 1,
-        ];
+        return array_values(array_filter($tasks, static function (mixed $task) use ($tomorrow, $timezone): bool {
+            if (! is_array($task) || ! is_numeric($task['due_date'] ?? null)) {
+                return false;
+            }
+
+            $dueDate = Carbon::createFromTimestampMs((int) $task['due_date'], $timezone)->toDateString();
+
+            return $dueDate <= $tomorrow;
+        }));
     }
 
     /**
@@ -135,7 +154,7 @@ class NotifyTomorrowTasks
         $lines = ['تسک های فردا:'];
 
         foreach ($grouped as $person) {
-            $lines[] = '';
+            $lines[] = ''; 
             $lines[] = $person['display'].':';
 
             foreach ($person['tasks'] as $task) {

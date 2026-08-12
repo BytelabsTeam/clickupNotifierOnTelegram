@@ -11,7 +11,7 @@ class UserNameResolverTest extends TestCase
     {
         config([
             'clickup.user_names' => [
-                'user@example.com' => 'عارف',
+                'arefmohaamd332@gmail.com' => 'عارف',
             ],
         ]);
 
@@ -19,7 +19,7 @@ class UserNameResolverTest extends TestCase
 
         $this->assertSame(
             'عارف',
-            $resolver->resolve('user@example.com', 'Aref ClickUp')
+            $resolver->resolve('arefmohaamd332@gmail.com', 'Aref ClickUp')
         );
     }
 

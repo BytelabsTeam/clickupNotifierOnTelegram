@@ -31,11 +31,32 @@ class TelegramNotifierTest extends TestCase
         Http::assertSent(function ($request) {
             return $request->url() === 'https://api.telegram.org/bot123456:telegram-token/sendPhoto'
                 && $request['photo'] === 'https://example.com/one.png'
-                && $request['caption'] === 'caption text';
+                && $request['caption'] === 'caption text'
+                && ! isset($request['message_thread_id']);
         });
 
         Http::assertNotSent(function ($request) {
             return str_contains($request->url(), 'sendMediaGroup');
+        });
+    }
+
+    public function test_it_sends_to_forum_topic_when_thread_id_is_set(): void
+    {
+        config([
+            'telegram.message_thread_id' => '42',
+        ]);
+
+        Http::fake([
+            'api.telegram.org/*' => Http::response(['ok' => true], 200),
+        ]);
+
+        app(TelegramNotifier::class)->send('hello topic');
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'https://api.telegram.org/bot123456:telegram-token/sendMessage'
+                && $request['chat_id'] === '-1001234567890'
+                && $request['text'] === 'hello topic'
+                && $request['message_thread_id'] === '42';
         });
     }
 

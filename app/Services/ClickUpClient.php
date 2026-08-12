@@ -169,10 +169,31 @@ class ClickUpClient
             'date_updated_gt' => $updatedAfterMs,
             'order_by' => 'updated',
             'subtasks' => 'true',
-        ]);
+        ], applyScopeFilters: true);
     }
 
     /**
+     * Fetch open tasks with due date before the given exclusive upper bound
+     * across the whole workspace (includes overdue tasks).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getOpenTasksDueBefore(int $dueDateLtMs): array
+    {
+        return $this->getTeamTasks([
+            'include_closed' => 'false',
+            'due_date_lt' => $dueDateLtMs,
+            'order_by' => 'due_date',
+            'subtasks' => 'true',
+        ], applyScopeFilters: false);
+    }
+
+    /**
+     * Fetch open tasks with a due date in the given window across the whole workspace.
+     *
+     * Scope filters (SPACE/FOLDER/LIST) are intentionally skipped so the daily
+     * digest is not limited to the same space used for done-task notifications.
+     *
      * @return list<array<string, mixed>>
      */
     public function getTasksDueBetween(int $dueDateGtMs, int $dueDateLtMs): array
@@ -183,28 +204,30 @@ class ClickUpClient
             'due_date_lt' => $dueDateLtMs,
             'order_by' => 'due_date',
             'subtasks' => 'true',
-        ]);
+        ], applyScopeFilters: false);
     }
 
     /**
-     * @param  array<string, mixed>  $query
+     * @param  array<string, scalar>  $query
      * @return list<array<string, mixed>>
      */
-    private function getTeamTasks(array $query): array
+    private function getTeamTasks(array $query, bool $applyScopeFilters = true): array
     {
         $token = $this->requireApiToken();
         $teamId = $this->requireTeamId();
 
-        if ($listId = config('clickup.list_id')) {
-            $query['list_ids[]'] = (int) $listId;
-        }
+        if ($applyScopeFilters) {
+            if ($listId = config('clickup.list_id')) {
+                $query['list_ids[]'] = (int) $listId;
+            }
 
-        if ($folderId = config('clickup.folder_id')) {
-            $query['project_ids[]'] = (int) $folderId;
-        }
+            if ($folderId = config('clickup.folder_id')) {
+                $query['project_ids[]'] = (int) $folderId;
+            }
 
-        if ($spaceId = config('clickup.space_id')) {
-            $query['space_ids[]'] = (int) $spaceId;
+            if ($spaceId = config('clickup.space_id')) {
+                $query['space_ids[]'] = (int) $spaceId;
+            }
         }
 
         $tasks = [];

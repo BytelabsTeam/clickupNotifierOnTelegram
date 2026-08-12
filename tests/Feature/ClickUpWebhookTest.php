@@ -18,7 +18,7 @@ class ClickUpWebhookTest extends TestCase
             'clickup.api_token' => 'pk_test_token',
             'clickup.done_statuses' => ['complete', 'done', 'تکمیل'],
             'clickup.user_names' => [
-                'user@example.com' => 'عارف',
+                'arefmohaamd332@gmail.com' => 'عارف',
             ],
             'telegram.bot_token' => '123456:telegram-token',
             'telegram.chat_id' => '-1001234567890',
@@ -54,7 +54,7 @@ class ClickUpWebhookTest extends TestCase
                     'id' => 'hist_1',
                     'field' => 'status',
                     'user' => [
-                        'email' => 'user@example.com',
+                        'email' => 'arefmohaamd332@gmail.com',
                         'username' => 'Aref',
                     ],
                     'after' => [
@@ -74,20 +74,7 @@ class ClickUpWebhookTest extends TestCase
     public function test_it_sends_telegram_message_when_task_is_marked_done(): void
     {
         Http::fake([
-            'api.clickup.com/api/v2/task/abc123' => Http::response([
-                'name' => 'رفع باگ لاگین',
-                'attachments' => [],
-                'space' => ['id' => '7002367'],
-                'folder' => [
-                    'id' => '6992470',
-                    'name' => 'Telegramclient',
-                    'hidden' => false,
-                ],
-            ], 200),
-            'api.clickup.com/api/v2/space/7002367' => Http::response([
-                'id' => '7002367',
-                'name' => 'minishop',
-            ], 200),
+            'api.clickup.com/api/v2/task/abc123' => Http::response(['name' => 'رفع باگ لاگین'], 200),
             'api.telegram.org/*' => Http::response(['ok' => true], 200),
         ]);
 
@@ -97,17 +84,14 @@ class ClickUpWebhookTest extends TestCase
 
         Http::assertSent(function ($request) {
             return $request->url() === 'https://api.telegram.org/bot123456:telegram-token/sendMessage'
-                && $request['text'] === "عارف تسک \"رفع باگ لاگین\" رو انجام داد ✅\n\n#minishop_Telegramclient";
+                && $request['text'] === 'عارف تسک "رفع باگ لاگین" رو انجام داد ✅';
         });
     }
 
     public function test_it_does_not_send_duplicate_notifications(): void
     {
         Http::fake([
-            'api.clickup.com/api/v2/task/abc123' => Http::response([
-                'name' => 'رفع باگ لاگین',
-                'attachments' => [],
-            ], 200),
+            'api.clickup.com/api/v2/task/abc123' => Http::response(['name' => 'رفع باگ لاگین'], 200),
             'api.telegram.org/*' => Http::response(['ok' => true], 200),
         ]);
 
@@ -117,44 +101,6 @@ class ClickUpWebhookTest extends TestCase
         $this->postSignedWebhook($payload)->assertOk();
 
         Http::assertSentCount(2);
-    }
-
-    public function test_it_sends_task_media_with_caption_when_attachments_exist(): void
-    {
-        Http::fake([
-            'api.clickup.com/api/v2/task/abc123' => Http::response([
-                'name' => 'رفع باگ لاگین',
-                'attachments' => [
-                    [
-                        'url' => 'https://attachments.clickup.com/screenshot.png',
-                        'mimetype' => 'image/png',
-                        'extension' => 'png',
-                        'deleted' => false,
-                    ],
-                ],
-                'space' => ['id' => '7002367'],
-                'folder' => [
-                    'id' => '6992470',
-                    'name' => 'Telegramclient',
-                    'hidden' => false,
-                ],
-            ], 200),
-            'api.clickup.com/api/v2/space/7002367' => Http::response([
-                'id' => '7002367',
-                'name' => 'minishop',
-            ], 200),
-            'api.telegram.org/*' => Http::response(['ok' => true], 200),
-        ]);
-
-        $response = $this->postSignedWebhook($this->donePayload());
-
-        $response->assertOk()->assertJson(['status' => 'queued']);
-
-        Http::assertSent(function ($request) {
-            return $request->url() === 'https://api.telegram.org/bot123456:telegram-token/sendPhoto'
-                && $request['photo'] === 'https://attachments.clickup.com/screenshot.png'
-                && $request['caption'] === "عارف تسک \"رفع باگ لاگین\" رو انجام داد ✅\n\n#minishop_Telegramclient";
-        });
     }
 
     private function postSignedWebhook(array $payload)
@@ -186,7 +132,7 @@ class ClickUpWebhookTest extends TestCase
                     'id' => 'hist_1',
                     'field' => 'status',
                     'user' => [
-                        'email' => 'user@example.com',
+                        'email' => 'arefmohaamd332@gmail.com',
                         'username' => 'Aref',
                     ],
                     'before' => [

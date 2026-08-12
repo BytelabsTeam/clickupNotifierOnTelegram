@@ -2,13 +2,13 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\NotifyTomorrowTasks;
+use App\Services\NotifyNewlyAssignedTasks;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
-class TomorrowTasksCronController extends Controller
+class NewlyAssignedTasksCronController extends Controller
 {
-    public function __invoke(Request $request, NotifyTomorrowTasks $notifier): JsonResponse
+    public function __invoke(Request $request, NotifyNewlyAssignedTasks $notifier): JsonResponse
     {
         $token = config('clickup.cron_token');
 
@@ -34,12 +34,7 @@ class TomorrowTasksCronController extends Controller
         return response()->json([
             'status' => 'ok',
             'sent' => $result['sent'],
-            'people' => $result['people'],
-            'tasks' => $result['tasks'],
-            'fetched' => $result['fetched'],
-            'due_from' => $result['due_from'],
-            'due_to' => $result['due_to'],
-            'timezone' => $result['timezone'],
+            'notified' => $result['notified'],
             'checked_at' => now()->toIso8601String(),
         ]);
     }
