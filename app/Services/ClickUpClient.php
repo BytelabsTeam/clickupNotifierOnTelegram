@@ -173,6 +173,20 @@ class ClickUpClient
     }
 
     /**
+     * Fetch open tasks across the whole workspace.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getOpenTasks(): array
+    {
+        return $this->getTeamTasks([
+            'include_closed' => 'false',
+            'order_by' => 'due_date',
+            'subtasks' => 'true',
+        ], applyScopeFilters: false);
+    }
+
+    /**
      * Fetch open tasks with due date before the given exclusive upper bound
      * across the whole workspace (includes overdue tasks).
      *

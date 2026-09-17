@@ -52,6 +52,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'clickup.webhook' => \App\Http\Middleware\VerifyClickUpWebhookSignature::class,
+            'telegram.webhook' => \App\Http\Middleware\VerifyTelegramWebhookSecret::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

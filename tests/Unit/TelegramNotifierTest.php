@@ -74,6 +74,26 @@ class TelegramNotifierTest extends TestCase
         );
     }
 
+    public function test_it_replies_in_chunks_to_a_specific_chat(): void
+    {
+        Http::fake([
+            'api.telegram.org/*' => Http::response(['ok' => true], 200),
+        ]);
+
+        $long = str_repeat("line\n", 1200);
+
+        app(TelegramNotifier::class)->reply(555001, $long, 7);
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'https://api.telegram.org/bot123456:telegram-token/sendMessage'
+                && (string) $request['chat_id'] === '555001'
+                && (string) $request['message_thread_id'] === '7'
+                && mb_strlen((string) $request['text']) <= 4000;
+        });
+
+        $this->assertGreaterThan(1, collect(Http::recorded())->count());
+    }
+
     public function test_it_sends_multiple_photos_as_media_group(): void
     {
         Http::fake([

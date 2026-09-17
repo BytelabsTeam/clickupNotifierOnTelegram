@@ -28,6 +28,65 @@ php artisan migrate
 1. از [@BotFather](https://t.me/BotFather) یک Bot بسازید و `TELEGRAM_BOT_TOKEN` را بگیرید.
 2. Bot را به گروه اضافه کنید و به آن دسترسی ارسال پیام بدهید.
 3. `chat_id` گروه را در `TELEGRAM_CHAT_ID` قرار دهید (معمولاً با `-100` شروع می‌شود).
+4. در BotFather گزینه **Group Privacy** را خاموش کنید (`/setprivacy` → Disable) تا ربات دستورهای داخل گروه را ببیند.
+5. یک مقدار تصادفی برای `TELEGRAM_WEBHOOK_SECRET` بگذارید (حروف، عدد، `_` و `-`).
+
+## ربات تلگرام (دستورها)
+
+با وبهوک کار می‌کند؛ نیازی به polling نیست. بعد از پر کردن `.env`:
+
+```bash
+php artisan telegram:register-webhook
+```
+
+روی هاست اشتراکی (بدون SSH) همین URL را یک‌بار در مرورگر باز کنید:
+
+```
+https://yourdomain.com/clickup_notif_on_telegram/telegram/set-webhook?token=CLICKUP_CRON_TOKEN
+```
+
+آدرس وبهوک:
+
+```
+POST /api/webhooks/telegram
+```
+
+امضای هدر `X-Telegram-Bot-Api-Secret-Token` با `TELEGRAM_WEBHOOK_SECRET` بررسی می‌شود.
+
+در گروه تنظیم‌شده یا در چت خصوصی (اگر یوزرنیم‌تان در `TELEGRAM_USERNAMES` باشد) می‌توانید بزنید:
+
+| دستور | معادل فارسی | کار |
+|---|---|---|
+| `/tasks` | لیست | تسک‌های باز |
+| `/today` | امروز | تسک‌های امروز |
+| `/tomorrow` | فردا | امروز، فردا و عقب‌افتاده |
+| `/overdue` | عقب افتاده | فقط عقب‌افتاده |
+| `/me` | تسک های من | فقط تسک‌های خودتان |
+| `/topday` | برترین روز | بیشترین خط کد امروز |
+| `/topweek` | برترین هفته | بیشترین خط کد این هفته |
+| `/topmonth` | برترین ماه | بیشترین خط کد این ماه |
+| `/help` | راهنما | لیست دستورها |
+
+### گیت‌هاب (برترین‌ها)
+
+رتبه‌بندی بر اساس **خطوط اضافه‌شده** در برنچ پیش‌فرض ریپوهاست (کامیت‌های merge حساب نمی‌شوند).
+
+در `.env`:
+
+```env
+GITHUB_TOKEN=github_pat_...
+GITHUB_REPOS=org/app,https://github.com/org/api
+GITHUB_USER_LOGINS='{"arefmohaamd332@gmail.com":"aref-github","ali@example.com":"ali-github"}'
+```
+
+- توکن را از [Fine-grained personal access tokens](https://github.com/settings/personal-access-tokens/new) بسازید.
+  - Resource owner: سازمان `BytelabsTeam`
+  - Repository access: فقط ریپوهای لیست‌شده در `GITHUB_REPOS`
+  - Permissions → Repository: **Contents = Read-only**
+- `GITHUB_REPOS` را با ویرگول جدا کنید (`owner/repo` یا لینک کامل).
+- `GITHUB_USER_LOGINS` یوزرنیم گیت‌هاب را به همان ایمیلی وصل می‌کند که در `CLICKUP_USER_NAMES` و `TELEGRAM_USERNAMES` دارید تا اسم فارسی و تگ تلگرام درست نمایش داده شود.
+
+بعد از تغییر دستورها یک‌بار وبهوک را دوباره ست کنید تا منوی ربات به‌روز شود.
 
 ## تنظیم ClickUp
 
@@ -110,7 +169,7 @@ CLICKUP_USER_NAMES='{"hamid@example.com":"حمید تد"}'
 
 ## استقرار روی cPanel
 
-1. فایل‌های پروژه را آپلود کنید (شامل `app/`، `bootstrap/`، `config/`).
+1. فایل‌های پروژه را آپلود کنید (شامل `app/`، `bootstrap/`، `config/`). پوشه `bootstrap/cache/` را آپلود نکنید، یا بعد از آپلود فایل‌های `packages.php` و `services.php` داخل آن را حذف کنید؛ در غیر این صورت خطای `PailServiceProvider not found` می‌آید.
 2. Document Root را روی پوشه پروژه بگذارید — فایل `.htaccess` ریشه درخواست‌ها را به `public/` هدایت می‌کند؛ نیازی به `/public/` در URL نیست.
 3. `.env` را روی سرور پر کنید (ClickUp، Telegram، `CLICKUP_CRON_TOKEN`). `APP_URL` باید دقیقاً همان آدرس زیرپوشه باشد، مثلاً:
 
