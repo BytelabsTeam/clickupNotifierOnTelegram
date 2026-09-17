@@ -112,9 +112,9 @@ class TelegramNotifier
                 ['command' => 'tomorrow', 'description' => 'تسک‌های امروز، فردا و عقب‌افتاده'],
                 ['command' => 'overdue', 'description' => 'تسک‌های عقب‌افتاده'],
                 ['command' => 'me', 'description' => 'فقط تسک‌های خودت'],
-                ['command' => 'topday', 'description' => 'برترین‌های امروز (خطوط کد)'],
-                ['command' => 'topweek', 'description' => 'برترین‌های این هفته (خطوط کد)'],
-                ['command' => 'topmonth', 'description' => 'برترین‌های این ماه (خطوط کد)'],
+                ['command' => 'topday', 'description' => 'برترین‌های امروز'],
+                ['command' => 'topweek', 'description' => 'برترین‌های این هفته'],
+                ['command' => 'topmonth', 'description' => 'برترین‌های این ماه'],
                 ['command' => 'help', 'description' => 'راهنما'],
             ], JSON_UNESCAPED_UNICODE),
         ])->throw();
@@ -248,7 +248,10 @@ class TelegramNotifier
     {
         $token = $this->botToken();
 
-        $response = Http::asForm()->post("https://api.telegram.org/bot{$token}/{$method}", $payload);
+        $response = Http::asForm()
+            ->timeout(15)
+            ->connectTimeout(5)
+            ->post("https://api.telegram.org/bot{$token}/{$method}", $payload);
 
         $response->throw();
 

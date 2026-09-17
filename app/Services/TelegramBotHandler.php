@@ -52,26 +52,72 @@ class TelegramBotHandler
         $threadId = is_numeric($threadId) ? $threadId : null;
         $fromUsername = (string) ($message['from']['username'] ?? '');
         $isLeaderboard = in_array($command, ['topday', 'topweek', 'topmonth'], true);
-        $progressId = null;
 
         if ($isLeaderboard) {
-            $progressId = $this->telegramNotifier->reply($chatId, 'در حال محاسبه خطوط کد…', $threadId);
+            $progressId = $this->telegramNotifier->reply($chatId, 'در حال محاسبه امتیاز…', $threadId);
+            $this->finishLeaderboard($command, $fromUsername, $chatId, $progressId, $threadId);
+
+            return;
         }
 
         try {
             $reply = $this->responseFor($command, $fromUsername);
         } catch (\Throwable $exception) {
             report($exception);
-            $reply = 'خطا در اجرای دستور. کمی بعد دوباره امتحان کن.';
-        }
-
-        if ($progressId !== null) {
-            $this->telegramNotifier->edit($chatId, $progressId, $reply);
-
-            return;
+            $reply = 'خطا در اجرای دستور: '.$this->publicError($exception);
         }
 
         $this->telegramNotifier->reply($chatId, $reply, $threadId);
+    }
+
+    private function finishLeaderboard(
+        string $command,
+        string $fromUsername,
+        string|int $chatId,
+        ?int $progressId,
+        string|int|null $threadId,
+    ): void {
+        $work = function () use ($command, $fromUsername, $chatId, $progressId, $threadId): void {
+            @set_time_limit(180);
+            ignore_user_abort(true);
+
+            try {
+                $reply = $this->responseFor($command, $fromUsername);
+            } catch (\Throwable $exception) {
+                report($exception);
+                $reply = 'خطا در محاسبه امتیاز: '.$this->publicError($exception);
+            }
+
+            try {
+                if ($progressId !== null) {
+                    $this->telegramNotifier->edit($chatId, $progressId, $reply);
+
+                    return;
+                }
+
+                $this->telegramNotifier->reply($chatId, $reply, $threadId);
+            } catch (\Throwable $exception) {
+                report($exception);
+                $this->telegramNotifier->reply($chatId, $reply, $threadId);
+            }
+        };
+
+        $work();
+    }
+
+    private function publicError(\Throwable $exception): string
+    {
+        $message = trim($exception->getMessage());
+
+        if ($message === '') {
+            return 'کمی بعد دوباره امتحان کن.';
+        }
+
+        if (mb_strlen($message) > 220) {
+            return mb_substr($message, 0, 220).'…';
+        }
+
+        return $message;
     }
 
     private function responseFor(string $command, string $fromUsername): string
@@ -101,9 +147,9 @@ class TelegramBotHandler
             '/tomorrow — تسک‌های امروز، فردا و عقب‌افتاده',
             '/overdue — فقط تسک‌های عقب‌افتاده',
             '/me — فقط تسک‌های خودت',
-            '/topday — برترین‌های امروز (خطوط کد)',
-            '/topweek — برترین‌های این هفته (خطوط کد)',
-            '/topmonth — برترین‌های این ماه (خطوط کد)',
+            '/topday — برترین‌های امروز',
+            '/topweek — برترین‌های این هفته',
+            '/topmonth — برترین‌های این ماه',
             '/help — همین راهنما',
             '',
             'بدون اسلش هم می‌تونی بنویسی: لیست، امروز، فردا، عقب افتاده، برترین روز، برترین هفته، برترین ماه',

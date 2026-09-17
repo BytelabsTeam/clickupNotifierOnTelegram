@@ -3,50 +3,49 @@
 namespace App\Services;
 
 use Carbon\Carbon;
+use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Pool;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class GitHubClient
 {
-    private const HISTORY_QUERY = <<<'GQL'
-query RepoHistory($owner: String!, $name: String!, $since: GitTimestamp, $until: GitTimestamp, $cursor: String) {
-  repository(owner: $owner, name: $name) {
-    defaultBranchRef {
-      target {
-        ... on Commit {
-          history(first: 100, since: $since, until: $until, after: $cursor) {
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
-            nodes {
-              oid
-              additions
-              deletions
-              committedDate
-              parents {
-                totalCount
-              }
-              author {
-                email
-                name
-                user {
-                  login
-                }
-              }
-            }
-          }
-        }
-      }
+    private const MAX_COMMITS_PER_REPO = 40;
+
+    private const DETAIL_POOL_SIZE = 10;
+
+    public function __construct(private readonly LocScoreFilter $locScoreFilter)
+    {
     }
-  }
-}
-GQL;
 
     /**
      * @return list<array{owner: string, name: string}>
      */
     public function repos(): array
+    {
+        $repos = [];
+
+        foreach ($this->configuredRepos() as $repo) {
+            $repos[$this->repoKey($repo)] = $repo;
+        }
+
+        $org = config('github.org');
+
+        if (is_string($org) && trim($org) !== '') {
+            foreach ($this->discoverOrgRepos(trim($org)) as $repo) {
+                $repos[$this->repoKey($repo)] = $repo;
+            }
+        }
+
+        return array_values($repos);
+    }
+
+    /**
+     * @return list<array{owner: string, name: string}>
+     */
+    private function configuredRepos(): array
     {
         $repos = [];
 
@@ -66,6 +65,161 @@ GQL;
     }
 
     /**
+     * @param  array{owner: string, name: string}  $repo
+     */
+    private function repoKey(array $repo): string
+    {
+        return mb_strtolower($repo['owner'].'/'.$repo['name']);
+    }
+
+    /**
+     * @return list<array{owner: string, name: string}>
+     */
+    private function discoverOrgRepos(string $org): array
+    {
+        $token = config('github.token');
+
+        if (! is_string($token) || $token === '') {
+            return [];
+        }
+
+        /** @var list<array{owner: string, name: string}> $repos */
+        $repos = Cache::remember(
+            'github:org-repos:v1:'.mb_strtolower($org),
+            now()->addMinutes(30),
+            fn (): array => $this->fetchOrgRepos($token, $org)
+        );
+
+        return $repos;
+    }
+
+    /**
+     * @return list<array{owner: string, name: string}>
+     */
+    private function fetchOrgRepos(string $token, string $org): array
+    {
+        $raw = [];
+
+        try {
+            $raw = $this->paginateJsonList($token, "https://api.github.com/orgs/{$org}/repos", [
+                'type' => 'all',
+                'sort' => 'updated',
+            ]);
+        } catch (Throwable $exception) {
+            Log::warning("GitHub org repo list failed for {$org}: ".$exception->getMessage());
+        }
+
+        if ($raw === []) {
+            try {
+                $userRepos = $this->paginateJsonList($token, 'https://api.github.com/user/repos', [
+                    'affiliation' => 'owner,collaborator,organization_member',
+                    'sort' => 'updated',
+                ]);
+
+                $raw = array_values(array_filter(
+                    $userRepos,
+                    static function (array $repo) use ($org): bool {
+                        $owner = is_array($repo['owner'] ?? null) ? (string) ($repo['owner']['login'] ?? '') : '';
+
+                        return strcasecmp($owner, $org) === 0;
+                    }
+                ));
+            } catch (Throwable $exception) {
+                Log::warning('GitHub user repo list failed: '.$exception->getMessage());
+            }
+        }
+
+        $repos = [];
+
+        foreach ($raw as $item) {
+            $mapped = $this->mapApiRepo($item);
+
+            if ($mapped !== null) {
+                $repos[$this->repoKey($mapped)] = $mapped;
+            }
+        }
+
+        $repos = array_values($repos);
+
+        Log::info('GitHub discovered org repos', [
+            'org' => $org,
+            'count' => count($repos),
+            'repos' => array_map(
+                static fn (array $repo): string => $repo['owner'].'/'.$repo['name'],
+                $repos
+            ),
+        ]);
+
+        return $repos;
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     * @return array{owner: string, name: string}|null
+     */
+    private function mapApiRepo(array $item): ?array
+    {
+        if (($item['archived'] ?? false) || ($item['disabled'] ?? false) || ($item['fork'] ?? false)) {
+            return null;
+        }
+
+        $fullName = (string) ($item['full_name'] ?? '');
+
+        if ($fullName !== '') {
+            return $this->parseRepo($fullName);
+        }
+
+        $owner = is_array($item['owner'] ?? null) ? (string) ($item['owner']['login'] ?? '') : '';
+        $name = (string) ($item['name'] ?? '');
+
+        if ($owner === '' || $name === '') {
+            return null;
+        }
+
+        return [
+            'owner' => $owner,
+            'name' => $name,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $query
+     * @return list<array<string, mixed>>
+     */
+    private function paginateJsonList(string $token, string $url, array $query): array
+    {
+        $items = [];
+
+        for ($page = 1; $page <= 5; $page++) {
+            $response = $this->github($token)->get($url, [
+                ...$query,
+                'per_page' => 100,
+                'page' => $page,
+            ]);
+
+            $response->throw();
+
+            $batch = $response->json();
+
+            if (! is_array($batch) || $batch === []) {
+                break;
+            }
+
+            foreach ($batch as $item) {
+                if (is_array($item)) {
+                    $items[] = $item;
+                }
+            }
+
+            if (count($batch) < 100) {
+                break;
+            }
+        }
+
+        return $items;
+    }
+
+    /**
      * @return array{
      *     commits: list<array{login: ?string, email: ?string, name: ?string, additions: int, committed_at: string}>,
      *     skipped: list<string>
@@ -76,95 +230,73 @@ GQL;
         $token = $this->requireToken();
         $commits = [];
         $skipped = [];
+        $repos = $this->repos();
 
-        foreach ($this->repos() as $repo) {
+        Log::info('GitHub scoring started', [
+            'from' => $from->toIso8601String(),
+            'to' => $to->toIso8601String(),
+            'repos' => array_map(
+                static fn (array $repo): string => $repo['owner'].'/'.$repo['name'],
+                $repos
+            ),
+        ]);
+
+        foreach ($repos as $repo) {
             $slug = $repo['owner'].'/'.$repo['name'];
-            $cursor = null;
-            $page = 0;
 
             try {
-                do {
-                    $response = Http::withToken($token)
-                        ->acceptJson()
-                        ->withHeaders(['User-Agent' => 'clickup-telegram-notifier'])
-                        ->post('https://api.github.com/graphql', [
-                            'query' => self::HISTORY_QUERY,
-                            'variables' => [
-                                'owner' => $repo['owner'],
-                                'name' => $repo['name'],
-                                'since' => $from->toIso8601String(),
-                                'until' => $to->toIso8601String(),
-                                'cursor' => $cursor,
-                            ],
-                        ]);
+                $summaries = $this->listCommits($token, $repo['owner'], $repo['name'], $from, $to);
+                $shas = $this->scoreableShas($summaries);
 
-                    $response->throw();
+                Log::info("GitHub scoring {$slug}", [
+                    'listed' => count($summaries),
+                    'details' => count($shas),
+                ]);
 
-                    $payload = $response->json();
+                if ($shas === []) {
+                    continue;
+                }
 
-                    if (! is_array($payload)) {
-                        break;
+                $details = $this->commitDetails($token, $repo['owner'], $repo['name'], $shas);
+
+                if ($details === []) {
+                    Log::warning("GitHub commit details empty for {$slug}");
+                    $skipped[] = $slug;
+
+                    continue;
+                }
+
+                foreach ($details as $detail) {
+                    $score = $this->scoreFiles($detail['files'] ?? []);
+
+                    if ($score <= 0) {
+                        continue;
                     }
 
-                    if ($this->isInaccessibleRepo($payload)) {
-                        Log::warning("GitHub repo is not accessible with the current token: {$slug}");
-                        $skipped[] = $slug;
+                    $commit = is_array($detail['commit'] ?? null) ? $detail['commit'] : [];
+                    $author = is_array($detail['author'] ?? null) ? $detail['author'] : [];
+                    $gitAuthor = is_array($commit['author'] ?? null) ? $commit['author'] : [];
 
-                        continue 2;
-                    }
-
-                    if (isset($payload['errors']) && is_array($payload['errors']) && $payload['errors'] !== []) {
-                        $message = $payload['errors'][0]['message'] ?? 'GitHub GraphQL error';
-
-                        throw new \RuntimeException(
-                            "GitHub ({$slug}): ".(is_string($message) ? $message : 'GraphQL error')
-                        );
-                    }
-
-                    $history = $payload['data']['repository']['defaultBranchRef']['target']['history'] ?? null;
-
-                    if (! is_array($history)) {
-                        break;
-                    }
-
-                    foreach ($history['nodes'] ?? [] as $node) {
-                        if (! is_array($node)) {
-                            continue;
-                        }
-
-                        $parents = (int) (($node['parents']['totalCount'] ?? 1));
-
-                        if ($parents > 1) {
-                            continue;
-                        }
-
-                        $additions = (int) ($node['additions'] ?? 0);
-
-                        if ($additions <= 0) {
-                            continue;
-                        }
-
-                        $author = is_array($node['author'] ?? null) ? $node['author'] : [];
-                        $user = is_array($author['user'] ?? null) ? $author['user'] : [];
-
-                        $commits[] = [
-                            'login' => isset($user['login']) ? (string) $user['login'] : null,
-                            'email' => isset($author['email']) ? (string) $author['email'] : null,
-                            'name' => isset($author['name']) ? (string) $author['name'] : null,
-                            'additions' => $additions,
-                            'committed_at' => (string) ($node['committedDate'] ?? ''),
-                        ];
-                    }
-
-                    $hasNext = (bool) ($history['pageInfo']['hasNextPage'] ?? false);
-                    $cursor = $history['pageInfo']['endCursor'] ?? null;
-                    $page++;
-                } while ($hasNext && is_string($cursor) && $cursor !== '' && $page < 10);
-            } catch (\Illuminate\Http\Client\RequestException $exception) {
-                Log::warning("GitHub request failed for {$slug}: ".$exception->getMessage());
+                    $commits[] = [
+                        'login' => isset($author['login']) ? (string) $author['login'] : null,
+                        'email' => isset($gitAuthor['email']) ? (string) $gitAuthor['email'] : null,
+                        'name' => isset($gitAuthor['name']) ? (string) $gitAuthor['name'] : null,
+                        'additions' => $score,
+                        'committed_at' => (string) ($gitAuthor['date'] ?? ''),
+                    ];
+                }
+            } catch (Throwable $exception) {
+                Log::warning("GitHub scoring failed for {$slug}: ".$exception->getMessage(), [
+                    'exception' => $exception::class,
+                ]);
                 $skipped[] = $slug;
             }
         }
+
+        Log::info('GitHub scoring finished', [
+            'commits' => count($commits),
+            'skipped' => $skipped,
+        ]);
 
         return [
             'commits' => $commits,
@@ -173,30 +305,154 @@ GQL;
     }
 
     /**
-     * @param  array<string, mixed>  $payload
+     * @param  list<array<string, mixed>>  $summaries
+     * @return list<string>
      */
-    private function isInaccessibleRepo(array $payload): bool
+    private function scoreableShas(array $summaries): array
     {
-        $repository = $payload['data']['repository'] ?? null;
+        $shas = [];
 
-        if ($repository === null) {
-            return true;
-        }
-
-        foreach ($payload['errors'] ?? [] as $error) {
-            if (! is_array($error)) {
+        foreach ($summaries as $summary) {
+            if (count($summary['parents'] ?? []) > 1) {
                 continue;
             }
 
-            $type = (string) ($error['type'] ?? '');
-            $message = (string) ($error['message'] ?? '');
+            $sha = (string) ($summary['sha'] ?? '');
 
-            if ($type === 'NOT_FOUND' || str_contains($message, 'Could not resolve to a Repository')) {
-                return true;
+            if ($sha === '') {
+                continue;
+            }
+
+            $shas[] = $sha;
+
+            if (count($shas) >= self::MAX_COMMITS_PER_REPO) {
+                break;
             }
         }
 
-        return false;
+        return $shas;
+    }
+
+    /**
+     * @param  list<mixed>  $files
+     */
+    private function scoreFiles(array $files): int
+    {
+        $score = 0;
+
+        foreach ($files as $file) {
+            if (! is_array($file)) {
+                continue;
+            }
+
+            $path = (string) ($file['filename'] ?? '');
+
+            if ($path === '' || ! $this->locScoreFilter->counts($path)) {
+                continue;
+            }
+
+            $score += max(0, (int) ($file['additions'] ?? 0));
+            $score += max(0, (int) ($file['deletions'] ?? 0)) * 2;
+        }
+
+        return $score;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function listCommits(string $token, string $owner, string $name, Carbon $from, Carbon $to): array
+    {
+        $commits = [];
+
+        for ($page = 1; $page <= 2; $page++) {
+            $response = $this->github($token)->get("https://api.github.com/repos/{$owner}/{$name}/commits", [
+                'since' => $from->toIso8601String(),
+                'until' => $to->toIso8601String(),
+                'per_page' => 100,
+                'page' => $page,
+            ]);
+
+            $response->throw();
+
+            $batch = $response->json();
+
+            if (! is_array($batch) || $batch === []) {
+                break;
+            }
+
+            foreach ($batch as $commit) {
+                if (is_array($commit)) {
+                    $commits[] = $commit;
+                }
+            }
+
+            if (count($batch) < 100 || count($commits) >= self::MAX_COMMITS_PER_REPO * 2) {
+                break;
+            }
+        }
+
+        return $commits;
+    }
+
+    /**
+     * @param  list<string>  $shas
+     * @return list<array<string, mixed>>
+     */
+    private function commitDetails(string $token, string $owner, string $name, array $shas): array
+    {
+        $details = [];
+
+        foreach (array_chunk($shas, self::DETAIL_POOL_SIZE) as $chunk) {
+            $responses = Http::pool(function (Pool $pool) use ($chunk, $token, $owner, $name) {
+                $requests = [];
+
+                foreach ($chunk as $sha) {
+                    $requests[$sha] = $this->github($token, $pool->as($sha))
+                        ->get("https://api.github.com/repos/{$owner}/{$name}/commits/{$sha}");
+                }
+
+                return $requests;
+            });
+
+            foreach ($responses as $sha => $response) {
+                if ($response instanceof Throwable) {
+                    Log::warning("GitHub commit {$owner}/{$name}@{$sha} failed: ".$response->getMessage());
+
+                    continue;
+                }
+
+                if (! $response->successful()) {
+                    Log::warning("GitHub commit {$owner}/{$name}@{$sha} HTTP ".$response->status());
+
+                    continue;
+                }
+
+                $json = $response->json();
+
+                if (is_array($json)) {
+                    $details[] = $json;
+                }
+            }
+        }
+
+        return $details;
+    }
+
+    private function github(string $token, ?PendingRequest $request = null): PendingRequest
+    {
+        return ($request ?? Http::withToken($token))
+            ->withToken($token)
+            ->acceptJson()
+            ->timeout(8)
+            ->connectTimeout(5)
+            ->withOptions([
+                'force_ip_resolve' => 'v4',
+            ])
+            ->withHeaders([
+                'User-Agent' => 'clickup-telegram-notifier',
+                'X-GitHub-Api-Version' => '2022-11-28',
+            ]);
     }
 
     /**

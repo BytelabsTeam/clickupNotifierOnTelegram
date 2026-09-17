@@ -20,7 +20,7 @@ class GitHubLeaderboardService
         $from = Carbon::now($timezone)->startOfDay();
         $to = Carbon::now($timezone)->endOfDay();
 
-        return $this->format($from, $to, 'برترین‌های امروز (خطوط کد)');
+        return $this->format($from, $to, 'برترین‌های امروز');
     }
 
     public function formatTopWeek(): string
@@ -29,7 +29,7 @@ class GitHubLeaderboardService
         $from = Carbon::now($timezone)->startOfWeek(Carbon::SATURDAY);
         $to = $from->copy()->addWeek()->subSecond();
 
-        return $this->format($from, $to, 'برترین‌های این هفته (خطوط کد)');
+        return $this->format($from, $to, 'برترین‌های این هفته');
     }
 
     public function formatTopMonth(): string
@@ -38,13 +38,13 @@ class GitHubLeaderboardService
         $from = Carbon::now($timezone)->startOfMonth();
         $to = Carbon::now($timezone)->endOfMonth();
 
-        return $this->format($from, $to, 'برترین‌های این ماه (خطوط کد)');
+        return $this->format($from, $to, 'برترین‌های این ماه');
     }
 
     private function format(Carbon $from, Carbon $to, string $title): string
     {
         if ($this->gitHubClient->repos() === []) {
-            return $title.":\nلیست ریپوها خالی است. GITHUB_REPOS را در .env پر کن.";
+            return $title.":\nلیست ریپوها خالی است. GITHUB_ORG یا GITHUB_REPOS را در .env پر کن.";
         }
 
         try {
@@ -53,7 +53,7 @@ class GitHubLeaderboardService
             return $title.":\nتوکن گیت‌هاب تنظیم نشده. GITHUB_TOKEN را در .env بگذار.";
         }
 
-        $cacheKey = sprintf('github:loc:%d:%d', $from->getTimestamp(), $to->getTimestamp());
+        $cacheKey = sprintf('github:score:v3:%d:%d', $from->getTimestamp(), $to->getTimestamp());
 
         /** @var array{commits: list<array{login: ?string, email: ?string, name: ?string, additions: int, committed_at: string}>, skipped: list<string>} $result */
         $result = Cache::remember(
@@ -94,13 +94,13 @@ class GitHubLeaderboardService
         }
 
         if ($counts === []) {
-            $empty = $title.":\nدر این بازه خط کدی ثبت نشده.";
+            $empty = $title.":\nدر این بازه امتیازی ثبت نشده.";
 
             if ($skipped !== []) {
                 $empty .= $this->skippedFooter($skipped);
             }
 
-            return $empty;
+            return $empty.$this->scoringRulesFooter();
         }
 
         uasort($counts, static function (array $a, array $b): int {
@@ -119,7 +119,7 @@ class GitHubLeaderboardService
                 default => $rank.'. ',
             };
 
-            $lines[] = $medal.$person['display'].' — '.number_format($person['lines']).' خط';
+            $lines[] = $medal.$person['display'].' — '.number_format($person['lines']).' امتیاز';
             $rank++;
         }
 
@@ -129,7 +129,7 @@ class GitHubLeaderboardService
             $message .= $this->skippedFooter($skipped);
         }
 
-        return $message;
+        return $message.$this->scoringRulesFooter();
     }
 
     /**
@@ -138,6 +138,17 @@ class GitHubLeaderboardService
     private function skippedFooter(array $skipped): string
     {
         return "\n\nاین ریپوها با توکن فعلی دیده نشدند (خصوصی هستند یا توکن دسترسی ندارد):\n- ".implode("\n- ", $skipped);
+    }
+
+    private function scoringRulesFooter(): string
+    {
+        return implode("\n", [
+            '',
+            '',
+            'معیار امتیاز دهی:',
+            '🟢 هر خط کد اضافه شده به پروژه ۱ امتیاز مثبت',
+            '🔴 هر خط کد کم شده از پروژه ۲ امتیاز مثبت',
+        ]);
     }
 
     /**

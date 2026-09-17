@@ -10,6 +10,9 @@ class TelegramWebhookController extends Controller
 {
     public function __invoke(Request $request, TelegramBotHandler $handler): JsonResponse
     {
+        ignore_user_abort(true);
+        @set_time_limit(180);
+
         try {
             $handler->handle($request->json()->all());
         } catch (\Throwable $exception) {

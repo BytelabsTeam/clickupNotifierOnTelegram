@@ -14,6 +14,7 @@ $logins = json_decode(env('GITHUB_USER_LOGINS', '{}'), true);
 
 return [
     'token' => env('GITHUB_TOKEN'),
+    'org' => env('GITHUB_ORG'),
     'repos' => $decodedRepos,
     'user_logins' => is_array($logins) ? $logins : [],
 ];

@@ -37,6 +37,7 @@ class TelegramWebhookTest extends TestCase
             ],
             'github.token' => 'ghp_test_token',
             'github.repos' => ['acme/app'],
+            'github.org' => '',
             'github.user_logins' => [
                 'arefmohaamd332@gmail.com' => 'arefdev',
                 'ali@example.com' => 'alidev',
@@ -196,7 +197,7 @@ class TelegramWebhookTest extends TestCase
 
         Http::assertSent(function ($request) {
             return str_contains($request->url(), 'sendMessage')
-                && str_contains((string) $request['text'], 'در حال محاسبه خطوط کد');
+                && str_contains((string) $request['text'], 'در حال محاسبه امتیاز');
         });
 
         Http::assertSent(function ($request) {
@@ -206,9 +207,12 @@ class TelegramWebhookTest extends TestCase
 
             $text = (string) $request['text'];
 
-            return str_contains($text, 'برترین‌های امروز (خطوط کد):')
-                && str_contains($text, '🥇 عارف (@aref_telegram) — 800 خط')
-                && str_contains($text, '🥈 علی (@ali_telegram) — 300 خط')
+            return str_contains($text, 'برترین‌های امروز:')
+                && str_contains($text, '🥇 عارف (@aref_telegram) — 800 امتیاز')
+                && str_contains($text, '🥈 علی (@ali_telegram) — 300 امتیاز')
+                && str_contains($text, 'معیار امتیاز دهی:')
+                && str_contains($text, 'هر خط کد اضافه شده به پروژه ۱ امتیاز مثبت')
+                && str_contains($text, 'هر خط کد کم شده از پروژه ۲ امتیاز مثبت')
                 && ! str_contains($text, 'Hamid');
         });
 
@@ -221,9 +225,9 @@ class TelegramWebhookTest extends TestCase
 
             $text = (string) $request['text'];
 
-            return str_contains($text, 'برترین‌های این هفته (خطوط کد):')
-                && str_contains($text, '🥇 عارف (@aref_telegram) — 1,200 خط')
-                && str_contains($text, '🥈 علی (@ali_telegram) — 300 خط');
+            return str_contains($text, 'برترین‌های این هفته:')
+                && str_contains($text, '🥇 عارف (@aref_telegram) — 1,200 امتیاز')
+                && str_contains($text, '🥈 علی (@ali_telegram) — 300 امتیاز');
         });
 
         $this->postSignedWebhook($this->commandUpdate('/topmonth'))->assertOk();
@@ -235,9 +239,9 @@ class TelegramWebhookTest extends TestCase
 
             $text = (string) $request['text'];
 
-            return str_contains($text, 'برترین‌های این ماه (خطوط کد):')
-                && str_contains($text, '🥇 عارف (@aref_telegram) — 1,200 خط')
-                && str_contains($text, '🥈 علی (@ali_telegram) — 400 خط');
+            return str_contains($text, 'برترین‌های این ماه:')
+                && str_contains($text, '🥇 عارف (@aref_telegram) — 1,200 امتیاز')
+                && str_contains($text, '🥈 علی (@ali_telegram) — 400 امتیاز');
         });
     }
 
@@ -253,12 +257,31 @@ class TelegramWebhookTest extends TestCase
 
         Http::assertSent(function ($request) {
             return str_contains($request->url(), 'sendMessage')
-                && str_contains((string) $request['text'], 'در حال محاسبه خطوط کد');
+                && str_contains((string) $request['text'], 'در حال محاسبه امتیاز');
         });
 
         Http::assertSent(function ($request) {
             return str_contains($request->url(), 'editMessageText')
                 && str_contains((string) $request['text'], 'توکن گیت‌هاب تنظیم نشده');
+        });
+    }
+
+    public function test_it_edits_progress_when_github_repos_are_inaccessible(): void
+    {
+        Http::fake(function ($request) {
+            if (str_contains($request->url(), 'api.telegram.org')) {
+                return Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200);
+            }
+
+            return Http::response(['message' => 'Not Found'], 404);
+        });
+
+        $this->postSignedWebhook($this->commandUpdate('/topday'))->assertOk();
+
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), 'editMessageText')
+                && str_contains((string) $request['text'], 'در این بازه امتیازی ثبت نشده')
+                && str_contains((string) $request['text'], 'acme/app');
         });
     }
 
@@ -572,100 +595,84 @@ class TelegramWebhookTest extends TestCase
 
     private function fakeGithubCommits(): void
     {
-        $history = [
-            'pageInfo' => [
-                'hasNextPage' => false,
-                'endCursor' => null,
-            ],
-            'nodes' => [
-                [
-                    'oid' => 'today-aref',
-                    'additions' => 800,
-                    'deletions' => 20,
-                    'committedDate' => '2026-09-16T08:00:00Z',
-                    'parents' => ['totalCount' => 1],
-                    'author' => [
-                        'email' => 'arefmohaamd332@gmail.com',
-                        'name' => 'Aref',
-                        'user' => ['login' => 'arefdev'],
+        $summaries = [
+            $this->githubCommitSummary('today-aref', '2026-09-16T08:00:00Z', 'arefdev', 'arefmohaamd332@gmail.com', 'Aref', 1),
+            $this->githubCommitSummary('today-ali', '2026-09-16T09:00:00Z', 'alidev', 'ali@example.com', 'Ali', 1),
+            $this->githubCommitSummary('week-aref', '2026-09-14T12:00:00Z', 'arefdev', 'arefmohaamd332@gmail.com', 'Aref', 1),
+            $this->githubCommitSummary('month-ali', '2026-09-03T12:00:00Z', 'alidev', 'ali@example.com', 'Ali', 1),
+            $this->githubCommitSummary('old-hamid', '2026-08-30T12:00:00Z', 'hamiddev', 'hamid@example.com', 'Hamid', 1),
+            $this->githubCommitSummary('merge', '2026-09-16T11:00:00Z', 'arefdev', 'arefmohaamd332@gmail.com', 'Aref', 2),
+        ];
+
+        $details = [
+            'today-aref' => 800,
+            'today-ali' => 300,
+            'week-aref' => 400,
+            'month-ali' => 100,
+            'old-hamid' => 5000,
+        ];
+
+        Http::fake(function ($request) use ($summaries, $details) {
+            $url = $request->url();
+
+            if (str_contains($url, 'api.telegram.org')) {
+                return Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200);
+            }
+
+            if (preg_match('#/repos/acme/app/commits/([a-z0-9-]+)$#', $url, $matches) === 1) {
+                $sha = $matches[1];
+                $summary = collect($summaries)->firstWhere('sha', $sha) ?? $summaries[0];
+
+                return Http::response([
+                    ...$summary,
+                    'files' => [
+                        ['filename' => 'app/Services/Feature.php', 'additions' => $details[$sha] ?? 0],
+                        ['filename' => 'resources/css/app.css', 'additions' => 9000],
+                        ['filename' => 'vendor/laravel/framework/src/Support/Str.php', 'additions' => 4000],
                     ],
-                ],
-                [
-                    'oid' => 'today-ali',
-                    'additions' => 300,
-                    'deletions' => 5,
-                    'committedDate' => '2026-09-16T09:00:00Z',
-                    'parents' => ['totalCount' => 1],
-                    'author' => [
-                        'email' => 'ali@example.com',
-                        'name' => 'Ali',
-                        'user' => ['login' => 'alidev'],
-                    ],
-                ],
-                [
-                    'oid' => 'week-aref',
-                    'additions' => 400,
-                    'deletions' => 10,
-                    'committedDate' => '2026-09-14T12:00:00Z',
-                    'parents' => ['totalCount' => 1],
-                    'author' => [
-                        'email' => 'arefmohaamd332@gmail.com',
-                        'name' => 'Aref',
-                        'user' => ['login' => 'arefdev'],
-                    ],
-                ],
-                [
-                    'oid' => 'month-ali',
-                    'additions' => 100,
-                    'deletions' => 0,
-                    'committedDate' => '2026-09-03T12:00:00Z',
-                    'parents' => ['totalCount' => 1],
-                    'author' => [
-                        'email' => 'ali@example.com',
-                        'name' => 'Ali',
-                        'user' => ['login' => 'alidev'],
-                    ],
-                ],
-                [
-                    'oid' => 'old-hamid',
-                    'additions' => 5000,
-                    'deletions' => 0,
-                    'committedDate' => '2026-08-30T12:00:00Z',
-                    'parents' => ['totalCount' => 1],
-                    'author' => [
-                        'email' => 'hamid@example.com',
-                        'name' => 'Hamid',
-                        'user' => ['login' => 'hamiddev'],
-                    ],
-                ],
-                [
-                    'oid' => 'merge',
-                    'additions' => 9999,
-                    'deletions' => 0,
-                    'committedDate' => '2026-09-16T11:00:00Z',
-                    'parents' => ['totalCount' => 2],
-                    'author' => [
-                        'email' => 'arefmohaamd332@gmail.com',
-                        'name' => 'Aref',
-                        'user' => ['login' => 'arefdev'],
-                    ],
+                ], 200);
+            }
+
+            if (str_contains($url, '/repos/acme/app/commits')) {
+                return Http::response($summaries, 200);
+            }
+
+            if (preg_match('#/repos/acme/app$#', (string) parse_url($url, PHP_URL_PATH)) === 1) {
+                return Http::response(['default_branch' => 'main'], 200);
+            }
+
+            return Http::response(['message' => 'Not Found'], 404);
+        });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function githubCommitSummary(
+        string $sha,
+        string $date,
+        string $login,
+        string $email,
+        string $name,
+        int $parents,
+    ): array {
+        $parentList = [];
+
+        for ($i = 0; $i < $parents; $i++) {
+            $parentList[] = ['sha' => 'parent-'.$i];
+        }
+
+        return [
+            'sha' => $sha,
+            'parents' => $parentList,
+            'author' => ['login' => $login],
+            'commit' => [
+                'author' => [
+                    'email' => $email,
+                    'name' => $name,
+                    'date' => $date,
                 ],
             ],
         ];
-
-        Http::fake([
-            'api.github.com/graphql' => Http::response([
-                'data' => [
-                    'repository' => [
-                        'defaultBranchRef' => [
-                            'target' => [
-                                'history' => $history,
-                            ],
-                        ],
-                    ],
-                ],
-            ], 200),
-            'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200),
-        ]);
     }
 }
