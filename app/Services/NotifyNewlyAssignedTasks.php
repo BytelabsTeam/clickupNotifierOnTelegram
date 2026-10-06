@@ -12,8 +12,6 @@ class NotifyNewlyAssignedTasks
 
     private const NOTIFIED_CACHE_TTL_DAYS = 30;
 
-    private const DESCRIPTION_MAX_LENGTH = 1500;
-
     public function __construct(
         private readonly ClickUpClient $clickUpClient,
         private readonly TaskDoneDetector $taskDoneDetector,
@@ -110,12 +108,7 @@ class NotifyNewlyAssignedTasks
      * @param  array<string, mixed>  $task
      * @return array{
      *     name: string,
-     *     status: string,
-     *     priority: string,
-     *     due_date: string,
-     *     tag: string,
-     *     url: string,
-     *     description: string,
+     *     creator: string,
      *     media: list<array{url: string, type: string}>
      * }
      */
@@ -128,34 +121,37 @@ class NotifyNewlyAssignedTasks
             $fullTask = $task;
         }
 
-        $description = trim((string) ($fullTask['text_content'] ?? $fullTask['description'] ?? ''));
-
-        if (mb_strlen($description) > self::DESCRIPTION_MAX_LENGTH) {
-            $description = mb_substr($description, 0, self::DESCRIPTION_MAX_LENGTH).'…';
-        }
-
         return [
             'name' => trim((string) ($fullTask['name'] ?? $task['name'] ?? $taskId)),
-            'status' => $this->formatStatus($fullTask),
-            'priority' => $this->formatPriority($fullTask),
-            'due_date' => $this->formatDueDate($fullTask),
-            'tag' => $this->clickUpClient->resolveProjectTag($fullTask),
-            'url' => trim((string) ($fullTask['url'] ?? '')),
-            'description' => $description,
+            'creator' => $this->creatorName($fullTask, $task),
             'media' => $this->clickUpClient->extractMediaAttachments($fullTask['attachments'] ?? []),
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $fullTask
+     * @param  array<string, mixed>  $task
+     */
+    private function creatorName(array $fullTask, array $task): string
+    {
+        $creator = is_array($fullTask['creator'] ?? null) ? $fullTask['creator'] : null;
+        $creator ??= is_array($task['creator'] ?? null) ? $task['creator'] : null;
+
+        if (! is_array($creator)) {
+            return $this->userNameResolver->resolve(null, null);
+        }
+
+        return $this->userNameResolver->resolve(
+            isset($creator['email']) ? (string) $creator['email'] : null,
+            isset($creator['username']) ? (string) $creator['username'] : null,
+        );
     }
 
     /**
      * @param  array<string, mixed>  $assignee
      * @param  array{
      *     name: string,
-     *     status: string,
-     *     priority: string,
-     *     due_date: string,
-     *     tag: string,
-     *     url: string,
-     *     description: string,
+     *     creator: string,
      *     media: list<array{url: string, type: string}>
      * }  $details
      */
@@ -164,85 +160,13 @@ class NotifyNewlyAssignedTasks
         $email = isset($assignee['email']) ? (string) $assignee['email'] : null;
         $username = isset($assignee['username']) ? (string) $assignee['username'] : null;
         $displayName = $this->userNameResolver->resolve($email, $username);
-        $taggedName = $this->telegramUsernameResolver->formatDisplayName($displayName, $email);
+        $mention = $this->telegramUsernameResolver->formatMention($displayName, $email);
 
-        $lines = [
-            "تسک جدید به {$taggedName} assign شد:",
+        return implode("\n", [
+            $details['name'],
+            $mention,
             '',
-            'عنوان: '.$details['name'],
-            'وضعیت: '.$details['status'],
-            'اولویت: '.$details['priority'],
-            'ددلاین: '.$details['due_date'],
-        ];
-
-        if ($details['tag'] !== '') {
-            $lines[] = 'پروژه: '.$details['tag'];
-        }
-
-        if ($details['url'] !== '') {
-            $lines[] = 'لینک: '.$details['url'];
-        }
-
-        if ($details['description'] !== '') {
-            $lines[] = '';
-            $lines[] = 'توضیحات:';
-            $lines[] = $details['description'];
-        }
-
-        return implode("\n", $lines);
-    }
-
-    /**
-     * @param  array<string, mixed>  $task
-     */
-    private function formatStatus(array $task): string
-    {
-        $status = $task['status'] ?? null;
-
-        if (! is_array($status)) {
-            return '—';
-        }
-
-        $name = trim((string) ($status['status'] ?? ''));
-
-        return $name !== '' ? $name : '—';
-    }
-
-    /**
-     * @param  array<string, mixed>  $task
-     */
-    private function formatPriority(array $task): string
-    {
-        $priority = $task['priority'] ?? null;
-
-        if (! is_array($priority)) {
-            return '—';
-        }
-
-        $label = mb_strtolower(trim((string) ($priority['priority'] ?? '')));
-
-        return match ($label) {
-            'urgent' => 'فوری',
-            'high' => 'بالا',
-            'normal' => 'عادی',
-            'low' => 'پایین',
-            default => $label !== '' ? $label : '—',
-        };
-    }
-
-    /**
-     * @param  array<string, mixed>  $task
-     */
-    private function formatDueDate(array $task): string
-    {
-        $dueDate = $task['due_date'] ?? null;
-
-        if (! is_numeric($dueDate)) {
-            return '—';
-        }
-
-        return Carbon::createFromTimestampMs((int) $dueDate)
-            ->timezone(config('app.timezone'))
-            ->format('Y-m-d H:i');
+            '📝'.$details['creator'],
+        ]);
     }
 }

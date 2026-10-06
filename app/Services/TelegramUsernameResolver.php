@@ -30,4 +30,15 @@ class TelegramUsernameResolver
         // @username tags the person in Telegram groups; Persian name stays readable.
         return "{$displayName} (@{$username})";
     }
+
+    public function formatMention(string $displayName, ?string $email): string
+    {
+        $username = $this->resolve($email);
+
+        if ($username === null) {
+            return $displayName;
+        }
+
+        return '@'.$username;
+    }
 }
