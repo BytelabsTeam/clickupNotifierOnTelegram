@@ -38,6 +38,8 @@ class GitHubClientTest extends TestCase
             'github.token' => 'ghp_test_token',
             'github.org' => '',
             'github.repos' => ['BytelabsTeam/MegaShop', 'acme/app'],
+            'github.default_weight' => 1.0,
+            'github.repo_weights' => [],
         ]);
 
         Http::fake(function ($request) {
@@ -99,7 +101,70 @@ class GitHubClientTest extends TestCase
 
         $this->assertSame(['BytelabsTeam/MegaShop'], $result['skipped']);
         $this->assertCount(1, $result['commits']);
-        $this->assertSame(18, $result['commits'][0]['additions']);
+        // PHP: 12 + 3*2 = 18; CSS: 400 + 200*2 = 800; vendor/config skipped
+        $this->assertSame(818, $result['commits'][0]['additions']);
+    }
+
+    public function test_it_applies_repo_weight_and_falls_back_to_default(): void
+    {
+        config([
+            'github.token' => 'ghp_test_token',
+            'github.org' => '',
+            'github.repos' => ['BytelabsTeam/AdsPlatform', 'acme/app'],
+            'github.default_weight' => 0.8,
+            'github.repo_weights' => [
+                'bytelabsteam/adsplatform' => 1.2,
+            ],
+        ]);
+
+        Http::fake(function ($request) {
+            $url = $request->url();
+
+            if (preg_match('#/repos/(BytelabsTeam/AdsPlatform|acme/app)/commits/([a-z]+)$#', $url, $matches) === 1) {
+                return Http::response([
+                    'sha' => $matches[2],
+                    'parents' => [['sha' => 'parent']],
+                    'author' => ['login' => 'dev'],
+                    'commit' => [
+                        'author' => [
+                            'email' => 'dev@example.com',
+                            'name' => 'Dev',
+                            'date' => '2026-09-16T08:00:00Z',
+                        ],
+                    ],
+                    'files' => [
+                        ['filename' => 'app/Services/Foo.php', 'additions' => 100, 'deletions' => 0],
+                    ],
+                ], 200);
+            }
+
+            if (str_contains($url, '/commits')) {
+                $sha = str_contains($url, 'AdsPlatform') ? 'ads' : 'app';
+
+                return Http::response([
+                    [
+                        'sha' => $sha,
+                        'parents' => [['sha' => 'parent']],
+                    ],
+                ], 200);
+            }
+
+            return Http::response(['message' => 'Not Found'], 404);
+        });
+
+        $client = app(GitHubClient::class);
+
+        $this->assertSame(1.2, $client->repoWeight('BytelabsTeam', 'AdsPlatform'));
+        $this->assertSame(0.8, $client->repoWeight('acme', 'app'));
+
+        $result = $client->commitAdditions(
+            Carbon::parse('2026-09-16 00:00:00'),
+            Carbon::parse('2026-09-16 23:59:59')
+        );
+
+        $scores = collect($result['commits'])->pluck('additions')->sort()->values()->all();
+
+        $this->assertSame([80, 120], $scores);
     }
 
     public function test_it_skips_repos_when_commit_details_fail(): void

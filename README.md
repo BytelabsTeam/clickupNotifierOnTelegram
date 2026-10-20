@@ -69,13 +69,15 @@ POST /api/webhooks/telegram
 
 ### گیت‌هاب (برترین‌ها)
 
-رتبه‌بندی بر اساس **امتیاز** است: خطوط اضافه‌شده در برنچ پیش‌فرض، بدون CSS، بدون `vendor`/`node_modules` و بدون فایل‌های پیش‌فرض لاراول. کامیت‌های merge حساب نمی‌شوند.
+رتبه‌بندی بر اساس **امتیاز** است: خطوط اضافه‌شده/حذف‌شده (با ضریب پروژه)، شامل CSS/فرانت، بدون `vendor`/`node_modules` و بدون فایل‌های پیش‌فرض لاراول. کامیت‌های merge حساب نمی‌شوند.
 
 در `.env`:
 
 ```env
 GITHUB_TOKEN=github_pat_...
 GITHUB_REPOS=org/app,https://github.com/org/api
+GITHUB_DEFAULT_WEIGHT=0.8
+GITHUB_REPO_WEIGHTS={"BytelabsTeam/AdsPlatform":1.2,"BytelabsTeam/MegaShop":0.8}
 GITHUB_USER_LOGINS='{"arefmohaamd332@gmail.com":"aref-github","ali@example.com":"ali-github"}'
 ```
 

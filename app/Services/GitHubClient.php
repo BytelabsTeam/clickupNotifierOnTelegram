@@ -266,8 +266,10 @@ class GitHubClient
                     continue;
                 }
 
+                $weight = $this->repoWeight($repo['owner'], $repo['name']);
+
                 foreach ($details as $detail) {
-                    $score = $this->scoreFiles($detail['files'] ?? []);
+                    $score = $this->scoreFiles($detail['files'] ?? [], $weight);
 
                     if ($score <= 0) {
                         continue;
@@ -336,7 +338,7 @@ class GitHubClient
     /**
      * @param  list<mixed>  $files
      */
-    private function scoreFiles(array $files): int
+    private function scoreFiles(array $files, float $weight = 1.0): int
     {
         $score = 0;
 
@@ -355,7 +357,21 @@ class GitHubClient
             $score += max(0, (int) ($file['deletions'] ?? 0)) * 2;
         }
 
-        return $score;
+        return (int) round($score * $weight);
+    }
+
+    public function repoWeight(string $owner, string $name): float
+    {
+        $key = mb_strtolower(trim($owner).'/'.trim($name));
+        $weights = config('github.repo_weights', []);
+
+        if (is_array($weights) && isset($weights[$key]) && is_numeric($weights[$key])) {
+            return (float) $weights[$key];
+        }
+
+        $default = config('github.default_weight', 0.8);
+
+        return is_numeric($default) ? (float) $default : 0.8;
     }
 
     /**

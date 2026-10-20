@@ -38,6 +38,8 @@ class TelegramWebhookTest extends TestCase
             'github.token' => 'ghp_test_token',
             'github.repos' => ['acme/app'],
             'github.org' => '',
+            'github.default_weight' => 1.0,
+            'github.repo_weights' => [],
             'github.user_logins' => [
                 'arefmohaamd332@gmail.com' => 'arefdev',
                 'ali@example.com' => 'alidev',
@@ -627,7 +629,6 @@ class TelegramWebhookTest extends TestCase
                     ...$summary,
                     'files' => [
                         ['filename' => 'app/Services/Feature.php', 'additions' => $details[$sha] ?? 0],
-                        ['filename' => 'resources/css/app.css', 'additions' => 9000],
                         ['filename' => 'vendor/laravel/framework/src/Support/Str.php', 'additions' => 4000],
                     ],
                 ], 200);

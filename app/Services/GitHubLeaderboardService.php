@@ -53,7 +53,7 @@ class GitHubLeaderboardService
             return $title.":\nتوکن گیت‌هاب تنظیم نشده. GITHUB_TOKEN را در .env بگذار.";
         }
 
-        $cacheKey = sprintf('github:score:v3:%d:%d', $from->getTimestamp(), $to->getTimestamp());
+        $cacheKey = sprintf('github:score:v4:%d:%d', $from->getTimestamp(), $to->getTimestamp());
 
         /** @var array{commits: list<array{login: ?string, email: ?string, name: ?string, additions: int, committed_at: string}>, skipped: list<string>} $result */
         $result = Cache::remember(

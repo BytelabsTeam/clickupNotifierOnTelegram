@@ -8,7 +8,7 @@ class LocScoreFilter
      * @var list<string>
      */
     private const SKIP_EXTENSIONS = [
-        'css', 'scss', 'sass', 'less', 'styl', 'map',
+        'map',
         'png', 'jpg', 'jpeg', 'gif', 'ico', 'svg', 'webp',
         'woff', 'woff2', 'ttf', 'eot',
         'lock',
@@ -23,8 +23,6 @@ class LocScoreFilter
         'public/build/',
         'public/hot/',
         'public/vendor/',
-        'public/css/',
-        'resources/css/',
         'bootstrap/cache/',
         'storage/',
         'dist/',

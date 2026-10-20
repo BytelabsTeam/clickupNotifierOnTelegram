@@ -12,9 +12,24 @@ if (! is_array($decodedRepos)) {
 
 $logins = json_decode(env('GITHUB_USER_LOGINS', '{}'), true);
 
+$weights = json_decode(env('GITHUB_REPO_WEIGHTS', '{}'), true);
+$normalizedWeights = [];
+
+if (is_array($weights)) {
+    foreach ($weights as $repo => $weight) {
+        if (! is_string($repo) || trim($repo) === '' || ! is_numeric($weight)) {
+            continue;
+        }
+
+        $normalizedWeights[mb_strtolower(trim($repo))] = (float) $weight;
+    }
+}
+
 return [
     'token' => env('GITHUB_TOKEN'),
     'org' => env('GITHUB_ORG'),
     'repos' => $decodedRepos,
     'user_logins' => is_array($logins) ? $logins : [],
+    'default_weight' => (float) env('GITHUB_DEFAULT_WEIGHT', 0.8),
+    'repo_weights' => $normalizedWeights,
 ];
