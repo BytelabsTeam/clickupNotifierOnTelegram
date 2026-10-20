@@ -40,6 +40,7 @@ class GitHubClientTest extends TestCase
             'github.repos' => ['BytelabsTeam/MegaShop', 'acme/app'],
             'github.default_weight' => 1.0,
             'github.repo_weights' => [],
+            'github.ignore_deletions_repos' => [],
         ]);
 
         Http::fake(function ($request) {
@@ -99,10 +100,76 @@ class GitHubClientTest extends TestCase
             Carbon::parse('2026-09-16 23:59:59')
         );
 
-        $this->assertSame(['BytelabsTeam/MegaShop'], $result['skipped']);
+        $this->assertCount(1, $result['skipped']);
+        $this->assertSame('BytelabsTeam/MegaShop', $result['skipped'][0]['repo']);
+        $this->assertNotSame('', $result['skipped'][0]['reason']);
         $this->assertCount(1, $result['commits']);
         // PHP: 12 + 3*2 = 18; CSS: 400 + 200*2 = 800; vendor/config skipped
         $this->assertSame(818, $result['commits'][0]['additions']);
+    }
+
+    public function test_it_ignores_deletions_for_configured_repos(): void
+    {
+        config([
+            'github.token' => 'ghp_test_token',
+            'github.org' => '',
+            'github.repos' => ['BytelabsTeam/AdsPlatformIran', 'acme/app'],
+            'github.default_weight' => 1.0,
+            'github.repo_weights' => [],
+            'github.ignore_deletions_repos' => [
+                'bytelabsteam/adsplatformiran' => true,
+            ],
+        ]);
+
+        Http::fake(function ($request) {
+            $url = $request->url();
+
+            if (preg_match('#/repos/(BytelabsTeam/AdsPlatformIran|acme/app)/commits/([a-z]+)$#', $url, $matches) === 1) {
+                return Http::response([
+                    'sha' => $matches[2],
+                    'parents' => [['sha' => 'parent']],
+                    'author' => ['login' => 'dev'],
+                    'commit' => [
+                        'author' => [
+                            'email' => 'dev@example.com',
+                            'name' => 'Dev',
+                            'date' => '2026-09-16T08:00:00Z',
+                        ],
+                    ],
+                    'files' => [
+                        ['filename' => 'app/Services/Foo.php', 'additions' => 10, 'deletions' => 5],
+                    ],
+                ], 200);
+            }
+
+            if (str_contains($url, '/commits')) {
+                $sha = str_contains($url, 'AdsPlatformIran') ? 'ads' : 'app';
+
+                return Http::response([
+                    [
+                        'sha' => $sha,
+                        'parents' => [['sha' => 'parent']],
+                    ],
+                ], 200);
+            }
+
+            return Http::response(['message' => 'Not Found'], 404);
+        });
+
+        $client = app(GitHubClient::class);
+
+        $this->assertTrue($client->ignoresDeletions('BytelabsTeam', 'AdsPlatformIran'));
+        $this->assertFalse($client->ignoresDeletions('acme', 'app'));
+
+        $result = $client->commitAdditions(
+            Carbon::parse('2026-09-16 00:00:00'),
+            Carbon::parse('2026-09-16 23:59:59')
+        );
+
+        $scores = collect($result['commits'])->pluck('additions')->sort()->values()->all();
+
+        // AdsPlatformIran: only additions = 10; acme/app: 10 + 5*2 = 20
+        $this->assertSame([10, 20], $scores);
     }
 
     public function test_it_applies_repo_weight_and_falls_back_to_default(): void
@@ -115,6 +182,7 @@ class GitHubClientTest extends TestCase
             'github.repo_weights' => [
                 'bytelabsteam/adsplatform' => 1.2,
             ],
+            'github.ignore_deletions_repos' => [],
         ]);
 
         Http::fake(function ($request) {
@@ -203,7 +271,8 @@ class GitHubClientTest extends TestCase
             Carbon::parse('2026-09-16 23:59:59')
         );
 
-        $this->assertSame(['acme/app'], $result['skipped']);
+        $this->assertCount(1, $result['skipped']);
+        $this->assertSame('acme/app', $result['skipped'][0]['repo']);
         $this->assertSame([], $result['commits']);
     }
 

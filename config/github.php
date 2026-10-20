@@ -25,6 +25,26 @@ if (is_array($weights)) {
     }
 }
 
+$ignoreDeletionsRaw = env('GITHUB_IGNORE_DELETIONS_REPOS', '');
+$decodedIgnoreDeletions = json_decode((string) $ignoreDeletionsRaw, true);
+
+if (! is_array($decodedIgnoreDeletions)) {
+    $decodedIgnoreDeletions = array_values(array_filter(array_map(
+        static fn (string $repo): string => trim($repo),
+        explode(',', (string) $ignoreDeletionsRaw)
+    )));
+}
+
+$ignoreDeletionsRepos = [];
+
+foreach ($decodedIgnoreDeletions as $repo) {
+    if (! is_string($repo) || trim($repo) === '') {
+        continue;
+    }
+
+    $ignoreDeletionsRepos[mb_strtolower(trim($repo))] = true;
+}
+
 return [
     'token' => env('GITHUB_TOKEN'),
     'org' => env('GITHUB_ORG'),
@@ -32,4 +52,5 @@ return [
     'user_logins' => is_array($logins) ? $logins : [],
     'default_weight' => (float) env('GITHUB_DEFAULT_WEIGHT', 0.8),
     'repo_weights' => $normalizedWeights,
+    'ignore_deletions_repos' => $ignoreDeletionsRepos,
 ];

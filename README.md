@@ -78,6 +78,7 @@ GITHUB_TOKEN=github_pat_...
 GITHUB_REPOS=org/app,https://github.com/org/api
 GITHUB_DEFAULT_WEIGHT=0.8
 GITHUB_REPO_WEIGHTS={"BytelabsTeam/AdsPlatform":1.2,"BytelabsTeam/MegaShop":0.8}
+GITHUB_IGNORE_DELETIONS_REPOS=BytelabsTeam/AdsPlatformIran
 GITHUB_USER_LOGINS='{"arefmohaamd332@gmail.com":"aref-github","ali@example.com":"ali-github"}'
 ```
 
@@ -86,6 +87,7 @@ GITHUB_USER_LOGINS='{"arefmohaamd332@gmail.com":"aref-github","ali@example.com":
   - Repository access: فقط ریپوهای لیست‌شده در `GITHUB_REPOS`
   - Permissions → Repository: **Contents = Read-only**
 - `GITHUB_REPOS` را با ویرگول جدا کنید (`owner/repo` یا لینک کامل).
+- `GITHUB_IGNORE_DELETIONS_REPOS` ریپوهایی که خطوط حذف‌شده‌شان امتیاز نگیرند (فقط addition). با ویرگول یا JSON.
 - `GITHUB_USER_LOGINS` یوزرنیم گیت‌هاب را به همان ایمیلی وصل می‌کند که در `CLICKUP_USER_NAMES` و `TELEGRAM_USERNAMES` دارید تا اسم فارسی و تگ تلگرام درست نمایش داده شود.
 
 بعد از تغییر دستورها یک‌بار وبهوک را دوباره ست کنید تا منوی ربات به‌روز شود.

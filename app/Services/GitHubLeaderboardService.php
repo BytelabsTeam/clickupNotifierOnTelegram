@@ -53,9 +53,9 @@ class GitHubLeaderboardService
             return $title.":\nتوکن گیت‌هاب تنظیم نشده. GITHUB_TOKEN را در .env بگذار.";
         }
 
-        $cacheKey = sprintf('github:score:v4:%d:%d', $from->getTimestamp(), $to->getTimestamp());
+        $cacheKey = sprintf('github:score:v6:%d:%d', $from->getTimestamp(), $to->getTimestamp());
 
-        /** @var array{commits: list<array{login: ?string, email: ?string, name: ?string, additions: int, committed_at: string}>, skipped: list<string>} $result */
+        /** @var array{commits: list<array{login: ?string, email: ?string, name: ?string, additions: int, committed_at: string}>, skipped: list<array{repo: string, reason: string}>} $result */
         $result = Cache::remember(
             $cacheKey,
             now()->addMinutes(5),
@@ -63,6 +63,7 @@ class GitHubLeaderboardService
         );
 
         $commits = $result['commits'] ?? [];
+        /** @var list<array{repo: string, reason: string}> $skipped */
         $skipped = $result['skipped'] ?? [];
         $counts = [];
         $fromTs = $from->getTimestamp();
@@ -133,11 +134,28 @@ class GitHubLeaderboardService
     }
 
     /**
-     * @param  list<string>  $skipped
+     * @param  list<array{repo: string, reason: string}>  $skipped
      */
     private function skippedFooter(array $skipped): string
     {
-        return "\n\nاین ریپوها با توکن فعلی دیده نشدند (خصوصی هستند یا توکن دسترسی ندارد):\n- ".implode("\n- ", $skipped);
+        $lines = [];
+
+        foreach ($skipped as $item) {
+            $repo = is_array($item) ? (string) ($item['repo'] ?? '') : (string) $item;
+            $reason = is_array($item) ? (string) ($item['reason'] ?? '') : '';
+
+            if ($repo === '') {
+                continue;
+            }
+
+            $lines[] = $reason !== '' ? "{$repo} — {$reason}" : $repo;
+        }
+
+        if ($lines === []) {
+            return '';
+        }
+
+        return "\n\nاین ریپوها امتیازگیری نشدند:\n- ".implode("\n- ", $lines);
     }
 
     private function scoringRulesFooter(): string

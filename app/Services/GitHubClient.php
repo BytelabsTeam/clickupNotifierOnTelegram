@@ -222,7 +222,7 @@ class GitHubClient
     /**
      * @return array{
      *     commits: list<array{login: ?string, email: ?string, name: ?string, additions: int, committed_at: string}>,
-     *     skipped: list<string>
+     *     skipped: list<array{repo: string, reason: string}>
      * }
      */
     public function commitAdditions(Carbon $from, Carbon $to): array
@@ -261,15 +261,19 @@ class GitHubClient
 
                 if ($details === []) {
                     Log::warning("GitHub commit details empty for {$slug}");
-                    $skipped[] = $slug;
+                    $skipped[] = [
+                        'repo' => $slug,
+                        'reason' => 'جزئیات کامیت خالی برگشت (timeout یا خطای جزئی)',
+                    ];
 
                     continue;
                 }
 
                 $weight = $this->repoWeight($repo['owner'], $repo['name']);
+                $countDeletions = ! $this->ignoresDeletions($repo['owner'], $repo['name']);
 
                 foreach ($details as $detail) {
-                    $score = $this->scoreFiles($detail['files'] ?? [], $weight);
+                    $score = $this->scoreFiles($detail['files'] ?? [], $weight, $countDeletions);
 
                     if ($score <= 0) {
                         continue;
@@ -291,7 +295,10 @@ class GitHubClient
                 Log::warning("GitHub scoring failed for {$slug}: ".$exception->getMessage(), [
                     'exception' => $exception::class,
                 ]);
-                $skipped[] = $slug;
+                $skipped[] = [
+                    'repo' => $slug,
+                    'reason' => $this->humanizeGithubFailure($exception),
+                ];
             }
         }
 
@@ -304,6 +311,33 @@ class GitHubClient
             'commits' => $commits,
             'skipped' => $skipped,
         ];
+    }
+
+    private function humanizeGithubFailure(Throwable $exception): string
+    {
+        $message = $exception->getMessage();
+
+        if (str_contains($message, 'SSL certificate problem') || str_contains($message, 'cURL error 60')) {
+            return 'خطای SSL روی سرور (گواهی CA)';
+        }
+
+        if (str_contains($message, 'cURL error 28') || str_contains(mb_strtolower($message), 'timed out')) {
+            return 'timeout اتصال به GitHub';
+        }
+
+        if (preg_match('/\b404\b/', $message) === 1 || str_contains($message, 'Not Found')) {
+            return 'خصوصی است یا توکن Contents ندارد';
+        }
+
+        if (preg_match('/\b403\b/', $message) === 1 || str_contains($message, 'Forbidden')) {
+            return 'توکن مجاز نیست (403)';
+        }
+
+        if (preg_match('/\b401\b/', $message) === 1 || str_contains($message, 'Bad credentials')) {
+            return 'توکن نامعتبر است (401)';
+        }
+
+        return mb_substr($message, 0, 120);
     }
 
     /**
@@ -338,7 +372,7 @@ class GitHubClient
     /**
      * @param  list<mixed>  $files
      */
-    private function scoreFiles(array $files, float $weight = 1.0): int
+    private function scoreFiles(array $files, float $weight = 1.0, bool $countDeletions = true): int
     {
         $score = 0;
 
@@ -354,7 +388,10 @@ class GitHubClient
             }
 
             $score += max(0, (int) ($file['additions'] ?? 0));
-            $score += max(0, (int) ($file['deletions'] ?? 0)) * 2;
+
+            if ($countDeletions) {
+                $score += max(0, (int) ($file['deletions'] ?? 0)) * 2;
+            }
         }
 
         return (int) round($score * $weight);
@@ -372,6 +409,14 @@ class GitHubClient
         $default = config('github.default_weight', 0.8);
 
         return is_numeric($default) ? (float) $default : 0.8;
+    }
+
+    public function ignoresDeletions(string $owner, string $name): bool
+    {
+        $key = mb_strtolower(trim($owner).'/'.trim($name));
+        $repos = config('github.ignore_deletions_repos', []);
+
+        return is_array($repos) && isset($repos[$key]);
     }
 
     /**
