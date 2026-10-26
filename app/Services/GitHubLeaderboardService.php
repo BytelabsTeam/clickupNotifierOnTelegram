@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\CommitScore;
+use App\Models\TaskScore;
 use Carbon\Carbon;
 
 class GitHubLeaderboardService
@@ -10,8 +11,11 @@ class GitHubLeaderboardService
     public function __construct(
         private readonly GitHubClient $gitHubClient,
         private readonly CommitScoreSyncService $commitScoreSyncService,
+        private readonly TaskScoreSyncService $taskScoreSyncService,
+        private readonly ScoreIdentityResolver $scoreIdentityResolver,
         private readonly UserNameResolver $userNameResolver,
         private readonly TelegramUsernameResolver $telegramUsernameResolver,
+        private readonly ClickUpClient $clickUpClient,
     ) {
     }
 
@@ -44,14 +48,21 @@ class GitHubLeaderboardService
 
     private function format(Carbon $from, Carbon $to, string $title): string
     {
-        if ($this->gitHubClient->repos() === []) {
-            return $title.":\nلیست ریپوها خالی است. GITHUB_ORG یا GITHUB_REPOS را در .env پر کن.";
+        $hasGithub = $this->gitHubClient->repos() !== [];
+        $hasClickUp = $this->clickUpClient->isConfigured();
+
+        if (! $hasGithub && ! $hasClickUp) {
+            return $title.":\nنه GitHub و نه ClickUp برای امتیازدهی تنظیم شده.";
         }
 
-        try {
-            $this->gitHubClient->requireToken();
-        } catch (\RuntimeException) {
-            return $title.":\nتوکن گیت‌هاب تنظیم نشده. GITHUB_TOKEN را در .env بگذار.";
+        $skipped = [];
+
+        if ($hasGithub) {
+            try {
+                $this->gitHubClient->requireToken();
+            } catch (\RuntimeException) {
+                return $title.":\nتوکن گیت‌هاب تنظیم نشده. GITHUB_TOKEN را در .env بگذار.";
+            }
         }
 
         try {
@@ -60,35 +71,52 @@ class GitHubLeaderboardService
             return $title.":\nکلید IranRouter تنظیم نشده. IRANROUTER_API_KEY را در .env بگذار.";
         }
 
-        $sync = $this->commitScoreSyncService->syncCurrentMonth();
-        /** @var list<array{repo: string, reason: string}> $skipped */
-        $skipped = $sync['skipped'] ?? [];
+        if ($hasGithub) {
+            $sync = $this->commitScoreSyncService->syncCurrentMonth();
+            $skipped = $sync['skipped'] ?? [];
+        }
+
+        if ($hasClickUp) {
+            $this->taskScoreSyncService->syncCurrentMonth();
+        }
 
         $month = Carbon::now($this->timezone())->format('Y-m');
-        $rows = CommitScore::query()
-            ->where('month', $month)
-            ->whereNotNull('committed_at')
-            ->where('committed_at', '>=', $from->copy()->utc())
-            ->where('committed_at', '<=', $to->copy()->utc())
-            ->get();
-
         $counts = [];
 
-        foreach ($rows as $row) {
-            $identity = $this->identity($row->login, $row->email, $row->name);
+        if ($hasGithub) {
+            $commitRows = CommitScore::query()
+                ->where('month', $month)
+                ->whereNotNull('committed_at')
+                ->where('committed_at', '>=', $from->copy()->utc())
+                ->where('committed_at', '<=', $to->copy()->utc())
+                ->get();
 
-            if ($identity['key'] === '') {
-                continue;
+            foreach ($commitRows as $row) {
+                $this->addScore(
+                    $counts,
+                    $this->scoreIdentityResolver->resolve($row->login, $row->email, $row->name),
+                    (int) $row->score,
+                );
             }
+        }
 
-            $counts[$identity['key']] ??= [
-                'display' => $this->telegramUsernameResolver->formatDisplayName(
-                    $this->userNameResolver->resolve($identity['email'], $identity['username']),
-                    $identity['email']
-                ),
-                'lines' => 0,
-            ];
-            $counts[$identity['key']]['lines'] += (int) $row->score;
+        if ($hasClickUp) {
+            $taskRows = TaskScore::query()
+                ->where('month', $month)
+                ->where('is_code', false)
+                ->where('score', '>', 0)
+                ->whereNotNull('completed_at')
+                ->where('completed_at', '>=', $from->copy()->utc())
+                ->where('completed_at', '<=', $to->copy()->utc())
+                ->get();
+
+            foreach ($taskRows as $row) {
+                $this->addScore(
+                    $counts,
+                    $this->scoreIdentityResolver->resolve(null, $row->email, $row->username ?? $row->name),
+                    (int) $row->score,
+                );
+            }
         }
 
         if ($counts === []) {
@@ -131,6 +159,26 @@ class GitHubLeaderboardService
     }
 
     /**
+     * @param  array<string, array{display: string, lines: int}>  $counts
+     * @param  array{key: string, email: ?string, username: ?string}  $identity
+     */
+    private function addScore(array &$counts, array $identity, int $score): void
+    {
+        if ($identity['key'] === '' || $score <= 0) {
+            return;
+        }
+
+        $counts[$identity['key']] ??= [
+            'display' => $this->telegramUsernameResolver->formatDisplayName(
+                $this->userNameResolver->resolve($identity['email'], $identity['username']),
+                $identity['email']
+            ),
+            'lines' => 0,
+        ];
+        $counts[$identity['key']]['lines'] += $score;
+    }
+
+    /**
      * @param  list<array{repo: string, reason: string}>  $skipped
      */
     private function skippedFooter(array $skipped): string
@@ -161,65 +209,11 @@ class GitHubLeaderboardService
             '',
             '',
             'معیار امتیاز دهی:',
-            '🤖 امتیاز هر کامیت با LLM (۰ تا ۵۰۰۰) بر اساس متن کامیت، خلاصه diff و داکیومنت مبنا پروژه',
+            '🤖 کامیت GitHub با LLM (۰ تا ۵۰۰۰)',
+            '📋 تسک Done غیرکدی ClickUp با LLM (۰ تا ۵۰۰۰) — تسک‌های کدی صفر می‌مانند چون در Git امتیاز گرفته‌اند',
             '⭐ فقط کارهای واقعاً خفن نزدیک سقف امتیاز می‌گیرند',
-            '📅 فقط کامیت‌های همین ماه محاسبه و ذخیره می‌شوند',
+            '📅 فقط همین ماه محاسبه و ذخیره می‌شود',
         ]);
-    }
-
-    /**
-     * @return array{key: string, email: ?string, username: ?string}
-     */
-    private function identity(?string $login, ?string $email, ?string $name): array
-    {
-        $login = $login !== null && $login !== '' ? mb_strtolower(ltrim(trim($login), '@')) : '';
-        $email = $email !== null && $email !== '' ? mb_strtolower(trim($email)) : '';
-        $name = $name !== null ? trim($name) : '';
-
-        $mappedEmail = $login !== '' ? $this->emailForGithubLogin($login) : null;
-
-        if ($mappedEmail === null && $email !== '') {
-            $mappedEmail = $this->knownEmail($email);
-        }
-
-        $key = $mappedEmail
-            ?? ($login !== '' ? 'login:'.$login : null)
-            ?? ($email !== '' ? 'email:'.$email : null)
-            ?? ($name !== '' ? 'name:'.mb_strtolower($name) : '');
-
-        return [
-            'key' => $key,
-            'email' => $mappedEmail ?? ($email !== '' ? $email : null),
-            'username' => $login !== '' ? $login : ($name !== '' ? $name : null),
-        ];
-    }
-
-    private function emailForGithubLogin(string $login): ?string
-    {
-        foreach (config('github.user_logins', []) as $email => $mapped) {
-            if (mb_strtolower(ltrim(trim((string) $mapped), '@')) === $login) {
-                return mb_strtolower((string) $email);
-            }
-        }
-
-        return null;
-    }
-
-    private function knownEmail(string $email): ?string
-    {
-        foreach (array_keys(config('github.user_logins', [])) as $mappedEmail) {
-            if (mb_strtolower((string) $mappedEmail) === $email) {
-                return $email;
-            }
-        }
-
-        foreach (array_keys(config('clickup.user_names', [])) as $mappedEmail) {
-            if (mb_strtolower((string) $mappedEmail) === $email) {
-                return $email;
-            }
-        }
-
-        return null;
     }
 
     private function timezone(): string

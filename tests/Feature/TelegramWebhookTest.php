@@ -217,7 +217,8 @@ class TelegramWebhookTest extends TestCase
                 && str_contains($text, '🥇 عارف (@aref_telegram) — 800 امتیاز')
                 && str_contains($text, '🥈 علی (@ali_telegram) — 300 امتیاز')
                 && str_contains($text, 'معیار امتیاز دهی:')
-                && str_contains($text, 'امتیاز هر کامیت با LLM')
+                && str_contains($text, 'کامیت GitHub با LLM')
+                && str_contains($text, 'تسک Done غیرکدی ClickUp')
                 && ! str_contains($text, 'Hamid');
         });
 
@@ -315,6 +316,10 @@ class TelegramWebhookTest extends TestCase
         Http::fake(function ($request) {
             if (str_contains($request->url(), 'api.telegram.org')) {
                 return Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200);
+            }
+
+            if (str_contains($request->url(), 'api.clickup.com')) {
+                return Http::response(['tasks' => []], 200);
             }
 
             return Http::response(['message' => 'Not Found'], 404);
@@ -663,6 +668,10 @@ class TelegramWebhookTest extends TestCase
 
             if (str_contains($url, 'api.telegram.org')) {
                 return Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200);
+            }
+
+            if (str_contains($url, 'api.clickup.com')) {
+                return Http::response(['tasks' => []], 200);
             }
 
             if (str_contains($url, 'iranrouter.net') && str_contains($url, 'chat/completions')) {

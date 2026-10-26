@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Services\ClickUpClient;
+use App\Services\TaskScoreSyncService;
 use App\Services\TelegramNotifier;
 use App\Services\UserNameResolver;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -25,6 +26,7 @@ class NotifyTaskDoneOnTelegram implements ShouldQueue
         ClickUpClient $clickUpClient,
         UserNameResolver $userNameResolver,
         TelegramNotifier $telegramNotifier,
+        TaskScoreSyncService $taskScoreSyncService,
     ): void {
         $cacheKey = 'clickup_webhook:'.$this->idempotencyKey;
 
@@ -40,5 +42,11 @@ class NotifyTaskDoneOnTelegram implements ShouldQueue
         $media = $clickUpClient->extractMediaAttachments($task['attachments'] ?? []);
 
         $telegramNotifier->send($message, $media);
+
+        try {
+            $taskScoreSyncService->scoreTaskIfNeeded($task, $this->email, $this->username);
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
     }
 }

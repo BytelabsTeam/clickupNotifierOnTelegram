@@ -173,6 +173,37 @@ class ClickUpClient
     }
 
     /**
+     * Closed/done tasks whose done date falls in [doneAfterMs, doneBeforeMs).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getClosedTasksDoneBetween(int $doneAfterMs, int $doneBeforeMs): array
+    {
+        return $this->getTeamTasks([
+            'include_closed' => 'true',
+            'date_done_gt' => $doneAfterMs,
+            'date_done_lt' => $doneBeforeMs,
+            'order_by' => 'updated',
+            'subtasks' => 'true',
+        ], applyScopeFilters: false);
+    }
+
+    public function requireConfigured(): void
+    {
+        $this->requireApiToken();
+        $this->requireTeamId();
+    }
+
+    public function isConfigured(): bool
+    {
+        $token = config('clickup.api_token');
+        $teamId = config('clickup.team_id');
+
+        return is_string($token) && $token !== ''
+            && is_string($teamId) && $teamId !== '';
+    }
+
+    /**
      * Fetch open tasks across the whole workspace.
      *
      * @return list<array<string, mixed>>

@@ -13,9 +13,10 @@ class TelegramUsernameResolverTest extends TestCase
             'telegram.usernames' => [
                 'arefmohammad332@gmail.com' => 'MegaGeek',
             ],
+            'scoring.email_aliases' => [],
         ]);
 
-        $resolver = new TelegramUsernameResolver;
+        $resolver = app(TelegramUsernameResolver::class);
 
         $this->assertSame(
             '@MegaGeek',
@@ -25,9 +26,12 @@ class TelegramUsernameResolverTest extends TestCase
 
     public function test_it_falls_back_to_display_name_when_username_is_missing(): void
     {
-        config(['telegram.usernames' => []]);
+        config([
+            'telegram.usernames' => [],
+            'scoring.email_aliases' => [],
+        ]);
 
-        $resolver = new TelegramUsernameResolver;
+        $resolver = app(TelegramUsernameResolver::class);
 
         $this->assertSame('عارف', $resolver->formatMention('عارف', 'unknown@example.com'));
     }

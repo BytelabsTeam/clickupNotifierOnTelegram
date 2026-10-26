@@ -14,6 +14,7 @@ class PollClickUpDoneTasks
         private readonly TaskDoneDetector $taskDoneDetector,
         private readonly UserNameResolver $userNameResolver,
         private readonly TelegramNotifier $telegramNotifier,
+        private readonly TaskScoreSyncService $taskScoreSyncService,
     ) {
     }
 
@@ -50,6 +51,13 @@ class PollClickUpDoneTasks
             $media = $this->clickUpClient->extractMediaAttachments($fullTask['attachments'] ?? []);
 
             $this->telegramNotifier->send($message, $media);
+
+            try {
+                $this->taskScoreSyncService->scoreTaskIfNeeded($fullTask, $email, $username);
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+
             $notifiedCount++;
         }
 

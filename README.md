@@ -67,9 +67,14 @@ POST /api/webhooks/telegram
 | `/topmonth` | برترین ماه | بیشترین امتیاز این ماه |
 | `/help` | راهنما | لیست دستورها |
 
-### گیت‌هاب (برترین‌ها)
+### گیت‌هاب + ClickUp (برترین‌ها)
 
-رتبه‌بندی بر اساس **امتیاز LLM** برای هر کامیت است (۰ تا ۵۰۰۰). ورودی مدل: متن کامیت + خلاصه diff + داکیومنت مبنای پروژه. فقط کارهای واقعاً خفن نزدیک سقف امتیاز می‌گیرند. فقط کامیت‌های **ماه جاری** امتیاز می‌گیرند و در دیتابیس ذخیره می‌شوند؛ اجرای بعدی فقط کامیت‌های جدید را می‌سنجد. کامیت‌های merge حساب نمی‌شوند.
+رتبه‌بندی مجموع دو منبع است:
+
+1. **کامیت GitHub** — LLM روی متن کامیت + خلاصه diff + داکیومنت مبنا (۰ تا ۵۰۰۰)
+2. **تسک Done غیرکدی ClickUp** — LLM تشخیص می‌دهد تسک کدی است یا نه؛ کدی‌ها امتیاز ۰ می‌گیرند (چون در Git حساب شده‌اند)، غیرکدی‌ها ۰ تا ۵۰۰۰
+
+فقط کارهای واقعاً خفن نزدیک سقف امتیاز می‌گیرند. فقط **ماه جاری** ذخیره می‌شود؛ اجرای بعدی فقط موارد جدید را می‌سنجد.
 
 برای جلوگیری از timeout و retry تلگرام، وبهوک بلافاصله `ok` برمی‌گرداند و محاسبه leaderboard بعد از پاسخ انجام می‌شود؛ `update_id` تکراری نادیده گرفته می‌شود.
 
@@ -78,7 +83,11 @@ POST /api/webhooks/telegram
 ```env
 GITHUB_TOKEN=github_pat_...
 GITHUB_REPOS=org/app,https://github.com/org/api
-GITHUB_USER_LOGINS='{"arefmohaamd332@gmail.com":"aref-github","ali@example.com":"ali-github"}'
+GITHUB_USER_LOGINS='{"arefmohammad332@gmail.com":"DeAref","mo.salehi1387p@gmail.com":"MRSYTp"}'
+
+CLICKUP_USER_NAMES='{"arefmohammad332@gmail.com":"عارف","hassan.ah1381@gmail.com":"حسن"}'
+# ایمیل فرعی → ایمیل اصلی تا امتیاز یک نفر دو تکه نشود
+SCORE_EMAIL_ALIASES='{"other-github@gmail.com":"hassan.ah1381@gmail.com"}'
 
 IRANROUTER_API_KEY=ir-...
 IRANROUTER_BASE_URL=https://www.iranrouter.net/api/v1
@@ -90,9 +99,10 @@ IRANROUTER_MODEL=openai/gpt-6-luna
   - Repository access: فقط ریپوهای لیست‌شده در `GITHUB_REPOS`
   - Permissions → Repository: **Contents = Read-only**
 - `GITHUB_REPOS` را با ویرگول جدا کنید (`owner/repo` یا لینک کامل).
-- `GITHUB_USER_LOGINS` یوزرنیم گیت‌هاب را به همان ایمیلی وصل می‌کند که در `CLICKUP_USER_NAMES` و `TELEGRAM_USERNAMES` دارید تا اسم فارسی و تگ تلگرام درست نمایش داده شود.
-- کلید IranRouter را از داشبورد [iranrouter.net](https://www.iranrouter.net/) بگیرید (API سازگار با OpenAI).
-- داکیومنت مبنای هر ریپو یک‌بار با LLM ساخته و ذخیره می‌شود. برای بازسازی دستی:
+- `GITHUB_USER_LOGINS` یوزرنیم گیت‌هاب را به ایمیل وصل می‌کند.
+- `SCORE_EMAIL_ALIASES` ایمیل‌های مختلف یک نفر را به ایمیل canonical (معمولاً همان ClickUp) نگاشت می‌کند.
+- کلید IranRouter را از داشبورد [iranrouter.net](https://www.iranrouter.net/) بگیرید.
+- داکیومنت مبنای هر ریپو یک‌بار با LLM ساخته و ذخیره می‌شود:
 
 ```bash
 php artisan github:regenerate-scoring-doc owner/repo
@@ -102,9 +112,10 @@ php artisan github:regenerate-scoring-doc owner/repo
 
 ```bash
 php artisan github:score-commits
+php artisan clickup:score-tasks
 ```
 
-یا Cron URL:
+یا Cron URL برای کامیت‌ها:
 
 ```
 https://yourdomain.com/clickup_notif_on_telegram/cron/github-score-commits?token=CLICKUP_CRON_TOKEN
