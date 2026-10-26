@@ -85,7 +85,7 @@ class NotifyGitHubCommitsTest extends TestCase
                 return false;
             }
 
-            $expected = "عارف توسعه داد:\nرفع باگ لاگین\n\nDetails\n#MegaShop";
+            $expected = "عارف توسعه داد:\nرفع باگ لاگین\n#MegaShop";
 
             return ($request['text'] ?? null) === $expected;
         });

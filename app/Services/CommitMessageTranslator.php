@@ -20,21 +20,14 @@ class CommitMessageTranslator
             return $text;
         }
 
-        // فقط خط اول پیام کامیت را ترجمه کن (بدنهٔ طولانی را نگه دار)
+        // فقط خط اول (عنوان) کامیت را برای تلگرام نگه دار؛ بدنه را حذف کن
         $subject = $this->subjectLine($text);
-        $body = $this->bodyAfterSubject($text);
 
         if ($this->looksMostlyPersian($subject)) {
-            return $text;
+            return $subject;
         }
 
-        $translatedSubject = $this->translateCached($subject);
-
-        if ($body === '') {
-            return $translatedSubject;
-        }
-
-        return $translatedSubject."\n\n".$body;
+        return $this->translateCached($subject);
     }
 
     private function subjectLine(string $text): string
@@ -42,13 +35,6 @@ class CommitMessageTranslator
         $parts = preg_split("/\r\n|\n|\r/", $text, 2);
 
         return trim((string) ($parts[0] ?? $text));
-    }
-
-    private function bodyAfterSubject(string $text): string
-    {
-        $parts = preg_split("/\r\n|\n|\r/", $text, 2);
-
-        return trim((string) ($parts[1] ?? ''));
     }
 
     private function looksMostlyPersian(string $text): bool

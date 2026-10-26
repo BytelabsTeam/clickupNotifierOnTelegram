@@ -24,7 +24,7 @@ class CommitMessageTranslatorTest extends TestCase
     {
         Http::fake();
 
-        $result = app(CommitMessageTranslator::class)->toPersian('رفع باگ لاگین');
+        $result = app(CommitMessageTranslator::class)->toPersian("رفع باگ لاگین\n\nجزئیات بیشتر");
 
         $this->assertSame('رفع باگ لاگین', $result);
         Http::assertNothingSent();
@@ -42,7 +42,7 @@ class CommitMessageTranslatorTest extends TestCase
 
         $result = app(CommitMessageTranslator::class)->toPersian("Fix login bug\n\nMore details here");
 
-        $this->assertSame("رفع باگ لاگین\n\nMore details here", $result);
+        $this->assertSame('رفع باگ لاگین', $result);
 
         Http::assertSent(function ($request) {
             return $request->url() === 'https://www.iranrouter.net/api/v1/chat/completions'
