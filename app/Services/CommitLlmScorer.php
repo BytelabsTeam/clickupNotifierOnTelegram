@@ -24,11 +24,11 @@ class CommitLlmScorer
                 'content' => implode("\n", [
                     'You score a single GitHub commit for developer leaderboard impact.',
                     'Return ONLY valid JSON: {"score": <int>, "reason": "<short Persian or English>"}',
-                    'Score range: 0 to 5000 inclusive.',
-                    'Be strict: full/near-full scores (4000-5000) only for exceptional, high-impact work (major features, hard architecture, critical fixes with broad impact).',
-                    'Typical small fixes, typos, renames, minor refactors: 0-500.',
-                    'Medium features or meaningful improvements: roughly 500-1500.',
-                    'Large but not exceptional work: roughly 1500-3000.',
+                    'Score range: 0 to 3000 inclusive.',
+                    'Be strict: full/near-full scores (2500-3000) only for exceptional, high-impact work (major features, hard architecture, critical fixes with broad impact).',
+                    'Typical small fixes, typos, renames, minor refactors: 0-300.',
+                    'Medium features or meaningful improvements: roughly 300-1000.',
+                    'Large but not exceptional work: roughly 1000-2000.',
                     'Do not reward line count alone. Judge value against the project baseline document.',
                 ]),
             ],
@@ -101,7 +101,7 @@ class CommitLlmScorer
             return ['score' => 0, 'reason' => 'invalid_score'];
         }
 
-        $clamped = max(0, min(5000, (int) round((float) $score)));
+        $clamped = max(0, min(3000, (int) round((float) $score)));
         $reason = isset($json['reason']) && is_string($json['reason'])
             ? mb_substr(trim($json['reason']), 0, 500)
             : '';

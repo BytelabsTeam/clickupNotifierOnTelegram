@@ -13,7 +13,7 @@ class CommitLlmScorerTest extends TestCase
     {
         $scorer = app(CommitLlmScorer::class);
 
-        $this->assertSame(5000, $scorer->parseScore('{"score": 9000, "reason": "huge"}')['score']);
+        $this->assertSame(3000, $scorer->parseScore('{"score": 9000, "reason": "huge"}')['score']);
         $this->assertSame(0, $scorer->parseScore('{"score": -10, "reason": "bad"}')['score']);
         $this->assertSame(1200, $scorer->parseScore("```json\n{\"score\": 1200, \"reason\": \"ok\"}\n```")['score']);
         $this->assertSame(0, $scorer->parseScore('not json')['score']);
