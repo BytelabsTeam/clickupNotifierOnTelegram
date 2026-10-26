@@ -220,6 +220,75 @@ class GitHubClient
     }
 
     /**
+     * @return list<array{
+     *     sha: string,
+     *     message: string,
+     *     login: ?string,
+     *     email: ?string,
+     *     name: ?string,
+     *     committed_at: string,
+     *     repo: string,
+     *     repo_name: string
+     * }>
+     */
+    public function recentCommits(Carbon $from, Carbon $to): array
+    {
+        $token = $this->requireToken();
+        $commits = [];
+
+        foreach ($this->repos() as $repo) {
+            $slug = $repo['owner'].'/'.$repo['name'];
+
+            try {
+                $summaries = $this->listCommits($token, $repo['owner'], $repo['name'], $from, $to);
+            } catch (Throwable $exception) {
+                Log::warning("GitHub recent commits failed for {$slug}: ".$exception->getMessage());
+
+                continue;
+            }
+
+            foreach ($summaries as $summary) {
+                if (count($summary['parents'] ?? []) > 1) {
+                    continue;
+                }
+
+                $sha = (string) ($summary['sha'] ?? '');
+
+                if ($sha === '') {
+                    continue;
+                }
+
+                $commit = is_array($summary['commit'] ?? null) ? $summary['commit'] : [];
+                $author = is_array($summary['author'] ?? null) ? $summary['author'] : [];
+                $gitAuthor = is_array($commit['author'] ?? null) ? $commit['author'] : [];
+                $message = trim((string) ($commit['message'] ?? ''));
+
+                if ($message === '') {
+                    continue;
+                }
+
+                $commits[] = [
+                    'sha' => $sha,
+                    'message' => $message,
+                    'login' => isset($author['login']) ? (string) $author['login'] : null,
+                    'email' => isset($gitAuthor['email']) ? (string) $gitAuthor['email'] : null,
+                    'name' => isset($gitAuthor['name']) ? (string) $gitAuthor['name'] : null,
+                    'committed_at' => (string) ($gitAuthor['date'] ?? ''),
+                    'repo' => $slug,
+                    'repo_name' => $repo['name'],
+                ];
+            }
+        }
+
+        usort($commits, static function (array $a, array $b): int {
+            return strcmp($a['committed_at'], $b['committed_at'])
+                ?: strcmp($a['sha'], $b['sha']);
+        });
+
+        return $commits;
+    }
+
+    /**
      * @return array{
      *     commits: list<array{login: ?string, email: ?string, name: ?string, additions: int, committed_at: string}>,
      *     skipped: list<array{repo: string, reason: string}>

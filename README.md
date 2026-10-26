@@ -92,6 +92,46 @@ GITHUB_USER_LOGINS='{"arefmohaamd332@gmail.com":"aref-github","ali@example.com":
 
 بعد از تغییر دستورها یک‌بار وبهوک را دوباره ست کنید تا منوی ربات به‌روز شود.
 
+## اعلان کامیت‌های GitHub
+
+هر کامیت جدید (غیر از merge) در گروه تلگرام اعلام می‌شود؛ متن کامیت به فارسی ترجمه می‌شود:
+
+```
+عارف توسعه داد:
+رفع باگ لاگین
+#MegaShop
+```
+
+نام فارسی از همان `CLICKUP_USER_NAMES` + `GITHUB_USER_LOGINS` گرفته می‌شود.
+
+### روی هاست اشتراکی (cPanel)
+
+یک Cron Job از نوع **Fetch a URL** (هر ۱ دقیقه):
+
+```
+https://yourdomain.com/clickup_notif_on_telegram/cron/github-commits?token=CLICKUP_CRON_TOKEN
+```
+
+همان `CLICKUP_CRON_TOKEN` که برای پولینگ ClickUp استفاده می‌کنید.
+
+### روی سرور/VPS
+
+```bash
+php artisan github:poll-commits
+# یا حلقه مداوم:
+php artisan github:poll-commits --loop --interval=60
+```
+
+تنظیمات اختیاری:
+
+```env
+GITHUB_COMMIT_POLL_LOOKBACK_MINUTES=15
+GITHUB_COMMIT_POLL_INTERVAL=60
+TELEGRAM_COMMIT_MESSAGE_TEMPLATE="{name} توسعه داد:\n{message}\n#{repo}"
+```
+
+اولین بار فقط بازهٔ `LOOKBACK` اخیر را می‌گیرد تا گروه با تاریخچه پر نشود.
+
 ## تنظیم ClickUp
 
 1. از [ClickUp Settings > Apps](https://app.clickup.com/settings/apps) یک Personal API Token بسازید.

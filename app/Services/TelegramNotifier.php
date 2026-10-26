@@ -346,4 +346,18 @@ class TelegramNotifier
 
         return $message;
     }
+
+    public function formatCommitMessage(string $name, string $commitMessage, string $repoName): string
+    {
+        $template = (string) config(
+            'telegram.commit_message_template',
+            "{name} توسعه داد:\n{message}\n#{repo}"
+        );
+
+        return str_replace(
+            ['{name}', '{message}', '{repo}'],
+            [$name, trim($commitMessage), $repoName],
+            $template
+        );
+    }
 }

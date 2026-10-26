@@ -53,4 +53,6 @@ return [
     'default_weight' => (float) env('GITHUB_DEFAULT_WEIGHT', 0.8),
     'repo_weights' => $normalizedWeights,
     'ignore_deletions_repos' => $ignoreDeletionsRepos,
+    'commit_poll_lookback_minutes' => (int) env('GITHUB_COMMIT_POLL_LOOKBACK_MINUTES', 15),
+    'commit_poll_interval_seconds' => (int) env('GITHUB_COMMIT_POLL_INTERVAL', 60),
 ];
