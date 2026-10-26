@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\CommitScore;
+use App\Support\JalaliCalendar;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -24,11 +25,10 @@ class CommitScoreSyncService
      */
     public function syncCurrentMonth(?Carbon $now = null): array
     {
-        $timezone = (string) config('app.timezone', 'UTC');
-        $now ??= Carbon::now($timezone);
-        $from = $now->copy()->timezone($timezone)->startOfMonth();
-        $to = $now->copy()->timezone($timezone)->endOfMonth();
-        $month = $from->format('Y-m');
+        $bounds = JalaliCalendar::currentMonth($now);
+        $from = $bounds['from'];
+        $to = $bounds['to'];
+        $month = $bounds['key'];
 
         $lock = Cache::lock('github:score-sync:'.$month, 300);
 
@@ -80,7 +80,6 @@ class CommitScoreSyncService
             ];
         }
 
-        $timezone = (string) config('app.timezone', 'UTC');
         $result = $this->gitHubClient->scoreableCommits($from, $to);
         $commits = $result['commits'] ?? [];
         /** @var list<array{repo: string, reason: string}> $skipped */
@@ -141,7 +140,7 @@ class CommitScoreSyncService
                 );
 
                 $commitMonth = $committedAt !== null
-                    ? $committedAt->copy()->timezone($timezone)->format('Y-m')
+                    ? JalaliCalendar::monthKey($committedAt)
                     : $month;
 
                 CommitScore::query()->updateOrCreate(

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\TaskScore;
+use App\Support\JalaliCalendar;
 use App\Support\TaskDoneDetector;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -26,11 +27,11 @@ class TaskScoreSyncService
      */
     public function syncCurrentMonth(?Carbon $now = null): array
     {
-        $timezone = (string) config('app.timezone', 'UTC');
-        $now ??= Carbon::now($timezone);
-        $from = $now->copy()->timezone($timezone)->startOfMonth();
-        $to = $now->copy()->timezone($timezone)->endOfMonth();
-        $month = $from->format('Y-m');
+        $timezone = JalaliCalendar::timezone();
+        $bounds = JalaliCalendar::currentMonth($now);
+        $from = $bounds['from'];
+        $to = $bounds['to'];
+        $month = $bounds['key'];
 
         try {
             app(IranRouterClient::class)->requireApiKey();
@@ -185,8 +186,7 @@ class TaskScoreSyncService
         $projectContext = $this->clickUpClient->resolveProjectTag($task);
 
         $completedAt = $this->resolveCompletedAt($task);
-        $timezone = (string) config('app.timezone', 'UTC');
-        $month = ($completedAt ?? now($timezone))->copy()->timezone($timezone)->format('Y-m');
+        $month = JalaliCalendar::monthKey($completedAt ?? now(JalaliCalendar::timezone()));
 
         $result = $this->taskLlmScorer->score($taskName, $description, $projectContext);
 

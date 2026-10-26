@@ -651,7 +651,7 @@ class TelegramWebhookTest extends TestCase
             $this->githubCommitSummary('today-ali', '2026-09-16T09:00:00Z', 'alidev', 'ali@example.com', 'Ali', 1),
             $this->githubCommitSummary('week-aref', '2026-09-14T12:00:00Z', 'arefdev', 'arefmohaamd332@gmail.com', 'Aref', 1),
             $this->githubCommitSummary('month-ali', '2026-09-03T12:00:00Z', 'alidev', 'ali@example.com', 'Ali', 1),
-            $this->githubCommitSummary('old-hamid', '2026-08-30T12:00:00Z', 'hamiddev', 'hamid@example.com', 'Hamid', 1),
+            $this->githubCommitSummary('old-hamid', '2026-08-15T12:00:00Z', 'hamiddev', 'hamid@example.com', 'Hamid', 1),
             $this->githubCommitSummary('merge', '2026-09-16T11:00:00Z', 'arefdev', 'arefmohaamd332@gmail.com', 'Aref', 2),
         ];
 

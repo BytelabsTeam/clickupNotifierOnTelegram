@@ -49,7 +49,7 @@ class CommitScoreSyncServiceTest extends TestCase
             'message' => 'old',
             'score' => 100,
             'committed_at' => '2026-09-10 08:00:00',
-            'month' => '2026-09',
+            'month' => '1405-06',
         ]);
 
         ProjectScoringDoc::query()->create([
@@ -92,7 +92,7 @@ class CommitScoreSyncServiceTest extends TestCase
                     'email' => 'dev@example.com',
                     'name' => 'Dev',
                     'message' => 'ancient',
-                    'committed_at' => '2026-08-30T09:00:00Z',
+                    'committed_at' => '2026-08-15T09:00:00Z',
                     'files' => [],
                 ],
             ],
@@ -119,7 +119,7 @@ class CommitScoreSyncServiceTest extends TestCase
             'sha' => 'newsha',
             'repo' => 'acme/app',
             'score' => 900,
-            'month' => '2026-09',
+            'month' => '1405-06',
         ]);
         $this->assertDatabaseMissing('commit_scores', [
             'sha' => 'oldmonth',

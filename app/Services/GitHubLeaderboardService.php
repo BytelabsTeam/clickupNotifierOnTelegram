@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\CommitScore;
 use App\Models\TaskScore;
+use App\Support\JalaliCalendar;
 use Carbon\Carbon;
 
 class GitHubLeaderboardService
@@ -39,11 +40,9 @@ class GitHubLeaderboardService
 
     public function formatTopMonth(): string
     {
-        $timezone = $this->timezone();
-        $from = Carbon::now($timezone)->startOfMonth();
-        $to = Carbon::now($timezone)->endOfMonth();
+        $month = JalaliCalendar::currentMonth();
 
-        return $this->format($from, $to, 'برترین‌های این ماه');
+        return $this->format($month['from'], $month['to'], 'برترین‌های این ماه');
     }
 
     private function format(Carbon $from, Carbon $to, string $title): string
@@ -80,7 +79,7 @@ class GitHubLeaderboardService
             $this->taskScoreSyncService->syncCurrentMonth();
         }
 
-        $month = Carbon::now($this->timezone())->format('Y-m');
+        $month = JalaliCalendar::monthKey(Carbon::now($this->timezone()));
         $counts = [];
 
         if ($hasGithub) {
@@ -212,12 +211,12 @@ class GitHubLeaderboardService
             '🤖 کامیت GitHub با LLM (۰ تا ۵۰۰۰)',
             '📋 تسک Done غیرکدی ClickUp با LLM (۰ تا ۵۰۰۰) — تسک‌های کدی صفر می‌مانند چون در Git امتیاز گرفته‌اند',
             '⭐ فقط کارهای واقعاً خفن نزدیک سقف امتیاز می‌گیرند',
-            '📅 فقط همین ماه محاسبه و ذخیره می‌شود',
+            '📅 فقط همین ماه شمسی (به وقت ایران) محاسبه و ذخیره می‌شود',
         ]);
     }
 
     private function timezone(): string
     {
-        return (string) config('app.timezone', 'UTC');
+        return JalaliCalendar::timezone();
     }
 }
