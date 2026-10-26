@@ -266,6 +266,29 @@ class TelegramWebhookTest extends TestCase
         });
     }
 
+    public function test_it_ignores_duplicate_telegram_update_ids(): void
+    {
+        Http::fake([
+            'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200),
+        ]);
+
+        $payload = $this->commandUpdate('/help', [], 4242);
+
+        $this->postSignedWebhook($payload)->assertOk();
+        $this->postSignedWebhook($payload)->assertOk();
+
+        $helpSends = collect(Http::recorded())
+            ->filter(function (array $pair): bool {
+                [$request] = $pair;
+
+                return str_contains($request->url(), 'sendMessage')
+                    && str_contains((string) $request['text'], '/tasks — لیست تسک‌های باز');
+            })
+            ->count();
+
+        $this->assertSame(1, $helpSends);
+    }
+
     public function test_it_asks_for_github_token_when_missing(): void
     {
         config(['github.token' => '']);
@@ -396,10 +419,12 @@ class TelegramWebhookTest extends TestCase
      * @param  array<string, mixed>  $overrides
      * @return array<string, mixed>
      */
-    private function commandUpdate(string $text, array $overrides = []): array
+    private function commandUpdate(string $text, array $overrides = [], ?int $updateId = null): array
     {
+        static $nextUpdateId = 1000;
+
         return [
-            'update_id' => 1,
+            'update_id' => $updateId ?? $nextUpdateId++,
             'message' => array_replace_recursive([
                 'message_id' => 10,
                 'from' => [

@@ -2,8 +2,13 @@
 
 namespace App\Services;
 
+use App\Jobs\FinishTelegramLeaderboard;
+use Illuminate\Support\Facades\Cache;
+
 class TelegramBotHandler
 {
+    private const UPDATE_DEDUP_TTL_SECONDS = 600;
+
     public function __construct(
         private readonly ClickUpTaskListService $taskListService,
         private readonly GitHubLeaderboardService $gitHubLeaderboard,
@@ -16,6 +21,10 @@ class TelegramBotHandler
      */
     public function handle(array $update): void
     {
+        if (! $this->claimUpdate($update)) {
+            return;
+        }
+
         $message = $update['message'] ?? null;
 
         if (! is_array($message)) {
@@ -55,7 +64,15 @@ class TelegramBotHandler
 
         if ($isLeaderboard) {
             $progressId = $this->telegramNotifier->reply($chatId, 'در حال محاسبه امتیاز…', $threadId);
-            $this->finishLeaderboard($command, $fromUsername, $chatId, $progressId, $threadId);
+
+            // ACK webhook first; Telegram retries if this request stays open too long.
+            FinishTelegramLeaderboard::dispatchAfterResponse(
+                $command,
+                $fromUsername,
+                $chatId,
+                $progressId,
+                $threadId,
+            );
 
             return;
         }
@@ -70,39 +87,53 @@ class TelegramBotHandler
         $this->telegramNotifier->reply($chatId, $reply, $threadId);
     }
 
-    private function finishLeaderboard(
+    public function completeLeaderboard(
         string $command,
         string $fromUsername,
         string|int $chatId,
         ?int $progressId,
         string|int|null $threadId,
     ): void {
-        $work = function () use ($command, $fromUsername, $chatId, $progressId, $threadId): void {
-            @set_time_limit(180);
-            ignore_user_abort(true);
+        @set_time_limit(300);
+        ignore_user_abort(true);
 
-            try {
-                $reply = $this->responseFor($command, $fromUsername);
-            } catch (\Throwable $exception) {
-                report($exception);
-                $reply = 'خطا در محاسبه امتیاز: '.$this->publicError($exception);
+        try {
+            $reply = $this->responseFor($command, $fromUsername);
+        } catch (\Throwable $exception) {
+            report($exception);
+            $reply = 'خطا در محاسبه امتیاز: '.$this->publicError($exception);
+        }
+
+        try {
+            if ($progressId !== null) {
+                $this->telegramNotifier->edit($chatId, $progressId, $reply);
+
+                return;
             }
 
-            try {
-                if ($progressId !== null) {
-                    $this->telegramNotifier->edit($chatId, $progressId, $reply);
+            $this->telegramNotifier->reply($chatId, $reply, $threadId);
+        } catch (\Throwable $exception) {
+            report($exception);
+            $this->telegramNotifier->reply($chatId, $reply, $threadId);
+        }
+    }
 
-                    return;
-                }
+    /**
+     * @param  array<string, mixed>  $update
+     */
+    private function claimUpdate(array $update): bool
+    {
+        $updateId = $update['update_id'] ?? null;
 
-                $this->telegramNotifier->reply($chatId, $reply, $threadId);
-            } catch (\Throwable $exception) {
-                report($exception);
-                $this->telegramNotifier->reply($chatId, $reply, $threadId);
-            }
-        };
+        if (! is_numeric($updateId)) {
+            return true;
+        }
 
-        $work();
+        return Cache::add(
+            'telegram:update:'.(int) $updateId,
+            true,
+            now()->addSeconds(self::UPDATE_DEDUP_TTL_SECONDS)
+        );
     }
 
     private function publicError(\Throwable $exception): string

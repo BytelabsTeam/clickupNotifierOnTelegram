@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\CommitScore;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -29,6 +30,37 @@ class CommitScoreSyncService
         $to = $now->copy()->timezone($timezone)->endOfMonth();
         $month = $from->format('Y-m');
 
+        $lock = Cache::lock('github:score-sync:'.$month, 300);
+
+        try {
+            if (! $lock->block(180)) {
+                Log::warning('Commit score sync lock timeout', ['month' => $month]);
+
+                return [
+                    'scored' => 0,
+                    'skipped' => [],
+                ];
+            }
+        } catch (Throwable $exception) {
+            Log::warning('Commit score sync lock failed: '.$exception->getMessage());
+        }
+
+        try {
+            return $this->syncCurrentMonthLocked($from, $to, $month);
+        } finally {
+            try {
+                $lock->release();
+            } catch (Throwable) {
+                // Lock may already have expired.
+            }
+        }
+    }
+
+    /**
+     * @return array{scored: int, skipped: list<array{repo: string, reason: string}>}
+     */
+    private function syncCurrentMonthLocked(Carbon $from, Carbon $to, string $month): array
+    {
         try {
             $this->gitHubClient->requireToken();
             app(IranRouterClient::class)->requireApiKey();
@@ -48,6 +80,7 @@ class CommitScoreSyncService
             ];
         }
 
+        $timezone = (string) config('app.timezone', 'UTC');
         $result = $this->gitHubClient->scoreableCommits($from, $to);
         $commits = $result['commits'] ?? [];
         /** @var list<array{repo: string, reason: string}> $skipped */

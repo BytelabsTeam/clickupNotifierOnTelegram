@@ -10,8 +10,9 @@ class TelegramWebhookController extends Controller
 {
     public function __invoke(Request $request, TelegramBotHandler $handler): JsonResponse
     {
+        // Keep the process alive for afterResponse leaderboard work after Telegram ACKs.
         ignore_user_abort(true);
-        @set_time_limit(180);
+        @set_time_limit(300);
 
         try {
             $handler->handle($request->json()->all());
