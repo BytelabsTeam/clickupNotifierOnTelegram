@@ -2,13 +2,14 @@
 
 namespace App\Services;
 
+use App\Models\CommitScore;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\Cache;
 
 class GitHubLeaderboardService
 {
     public function __construct(
         private readonly GitHubClient $gitHubClient,
+        private readonly CommitScoreSyncService $commitScoreSyncService,
         private readonly UserNameResolver $userNameResolver,
         private readonly TelegramUsernameResolver $telegramUsernameResolver,
     ) {
@@ -53,32 +54,28 @@ class GitHubLeaderboardService
             return $title.":\nتوکن گیت‌هاب تنظیم نشده. GITHUB_TOKEN را در .env بگذار.";
         }
 
-        $cacheKey = sprintf('github:score:v6:%d:%d', $from->getTimestamp(), $to->getTimestamp());
+        try {
+            app(IranRouterClient::class)->requireApiKey();
+        } catch (\RuntimeException) {
+            return $title.":\nکلید IranRouter تنظیم نشده. IRANROUTER_API_KEY را در .env بگذار.";
+        }
 
-        /** @var array{commits: list<array{login: ?string, email: ?string, name: ?string, additions: int, committed_at: string}>, skipped: list<array{repo: string, reason: string}>} $result */
-        $result = Cache::remember(
-            $cacheKey,
-            now()->addMinutes(5),
-            fn (): array => $this->gitHubClient->commitAdditions($from, $to)
-        );
-
-        $commits = $result['commits'] ?? [];
+        $sync = $this->commitScoreSyncService->syncCurrentMonth();
         /** @var list<array{repo: string, reason: string}> $skipped */
-        $skipped = $result['skipped'] ?? [];
+        $skipped = $sync['skipped'] ?? [];
+
+        $month = Carbon::now($this->timezone())->format('Y-m');
+        $rows = CommitScore::query()
+            ->where('month', $month)
+            ->whereNotNull('committed_at')
+            ->where('committed_at', '>=', $from->copy()->utc())
+            ->where('committed_at', '<=', $to->copy()->utc())
+            ->get();
+
         $counts = [];
-        $fromTs = $from->getTimestamp();
-        $toTs = $to->getTimestamp();
 
-        foreach ($commits as $commit) {
-            $committedAt = $commit['committed_at'] !== ''
-                ? Carbon::parse($commit['committed_at'])->getTimestamp()
-                : null;
-
-            if ($committedAt !== null && ($committedAt < $fromTs || $committedAt > $toTs)) {
-                continue;
-            }
-
-            $identity = $this->identity($commit['login'], $commit['email'], $commit['name']);
+        foreach ($rows as $row) {
+            $identity = $this->identity($row->login, $row->email, $row->name);
 
             if ($identity['key'] === '') {
                 continue;
@@ -91,7 +88,7 @@ class GitHubLeaderboardService
                 ),
                 'lines' => 0,
             ];
-            $counts[$identity['key']]['lines'] += $commit['additions'];
+            $counts[$identity['key']]['lines'] += (int) $row->score;
         }
 
         if ($counts === []) {
@@ -164,8 +161,9 @@ class GitHubLeaderboardService
             '',
             '',
             'معیار امتیاز دهی:',
-            '🟢 هر خط کد اضافه شده به پروژه ۱ امتیاز مثبت',
-            '🔴 هر خط کد کم شده از پروژه ۲ امتیاز مثبت',
+            '🤖 امتیاز هر کامیت با LLM (۰ تا ۵۰۰۰) بر اساس متن کامیت، خلاصه diff و داکیومنت مبنا پروژه',
+            '⭐ فقط کارهای واقعاً خفن نزدیک سقف امتیاز می‌گیرند',
+            '📅 فقط کامیت‌های همین ماه محاسبه و ذخیره می‌شوند',
         ]);
     }
 

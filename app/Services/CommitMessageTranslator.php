@@ -3,12 +3,15 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class CommitMessageTranslator
 {
+    public function __construct(private readonly IranRouterClient $iranRouterClient)
+    {
+    }
+
     public function toPersian(string $text): string
     {
         $text = trim($text);
@@ -58,7 +61,7 @@ class CommitMessageTranslator
 
     private function translateCached(string $text): string
     {
-        $cacheKey = 'commit_translate:v1:'.sha1(mb_strtolower($text));
+        $cacheKey = 'commit_translate:iranrouter:v1:'.sha1(mb_strtolower($text));
 
         return Cache::remember($cacheKey, now()->addDays(30), function () use ($text): string {
             return $this->translate($text);
@@ -68,38 +71,23 @@ class CommitMessageTranslator
     private function translate(string $text): string
     {
         try {
-            $response = Http::timeout(8)
-                ->connectTimeout(4)
-                ->acceptJson()
-                ->get('https://translate.googleapis.com/translate_a/single', [
-                    'client' => 'gtx',
-                    'sl' => 'auto',
-                    'tl' => 'fa',
-                    'dt' => 't',
-                    'q' => $text,
-                ]);
+            $translated = $this->iranRouterClient->chat([
+                [
+                    'role' => 'system',
+                    'content' => implode("\n", [
+                        'You translate Git commit subject lines into natural Persian (Farsi).',
+                        'Return ONLY the Persian translation — no quotes, no explanation, no extra lines.',
+                        'Keep technical terms readable when a common Persian equivalent does not exist.',
+                        'If the text is already Persian, return it unchanged.',
+                    ]),
+                ],
+                [
+                    'role' => 'user',
+                    'content' => $text,
+                ],
+            ], 0.2, 200);
 
-            if (! $response->successful()) {
-                Log::warning('Commit translation HTTP '.$response->status());
-
-                return $text;
-            }
-
-            $json = $response->json();
-
-            if (! is_array($json) || ! isset($json[0]) || ! is_array($json[0])) {
-                return $text;
-            }
-
-            $pieces = [];
-
-            foreach ($json[0] as $chunk) {
-                if (is_array($chunk) && isset($chunk[0]) && is_string($chunk[0]) && $chunk[0] !== '') {
-                    $pieces[] = $chunk[0];
-                }
-            }
-
-            $translated = trim(implode('', $pieces));
+            $translated = trim($translated, " \t\n\r\0\x0B\"'«»");
 
             return $translated !== '' ? $translated : $text;
         } catch (Throwable $exception) {

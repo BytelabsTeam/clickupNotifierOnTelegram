@@ -3,11 +3,14 @@
 namespace Tests\Feature;
 
 use Carbon\Carbon;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class TelegramWebhookTest extends TestCase
 {
+    use RefreshDatabase;
+
     private const WEBHOOK_SECRET = 'telegram-secret-token';
 
     private const GROUP_CHAT_ID = '-1001234567890';
@@ -38,12 +41,13 @@ class TelegramWebhookTest extends TestCase
             'github.token' => 'ghp_test_token',
             'github.repos' => ['acme/app'],
             'github.org' => '',
-            'github.default_weight' => 1.0,
-            'github.repo_weights' => [],
             'github.user_logins' => [
                 'arefmohaamd332@gmail.com' => 'arefdev',
                 'ali@example.com' => 'alidev',
             ],
+            'iranrouter.api_key' => 'ir-test-key',
+            'iranrouter.base_url' => 'https://www.iranrouter.net/api/v1',
+            'iranrouter.model' => 'openai/gpt-6-luna',
         ]);
     }
 
@@ -191,7 +195,7 @@ class TelegramWebhookTest extends TestCase
         });
     }
 
-    public function test_it_ranks_github_line_counts_for_day_week_and_month(): void
+    public function test_it_ranks_github_llm_scores_for_day_week_and_month(): void
     {
         $this->fakeGithubCommits();
 
@@ -213,8 +217,7 @@ class TelegramWebhookTest extends TestCase
                 && str_contains($text, '🥇 عارف (@aref_telegram) — 800 امتیاز')
                 && str_contains($text, '🥈 علی (@ali_telegram) — 300 امتیاز')
                 && str_contains($text, 'معیار امتیاز دهی:')
-                && str_contains($text, 'هر خط کد اضافه شده به پروژه ۱ امتیاز مثبت')
-                && str_contains($text, 'هر خط کد کم شده از پروژه ۲ امتیاز مثبت')
+                && str_contains($text, 'امتیاز هر کامیت با LLM')
                 && ! str_contains($text, 'Hamid');
         });
 
@@ -244,6 +247,22 @@ class TelegramWebhookTest extends TestCase
             return str_contains($text, 'برترین‌های این ماه:')
                 && str_contains($text, '🥇 عارف (@aref_telegram) — 1,200 امتیاز')
                 && str_contains($text, '🥈 علی (@ali_telegram) — 400 امتیاز');
+        });
+    }
+
+    public function test_it_asks_for_iranrouter_key_when_missing(): void
+    {
+        config(['iranrouter.api_key' => '']);
+
+        Http::fake([
+            'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200),
+        ]);
+
+        $this->postSignedWebhook($this->commandUpdate('/topday'))->assertOk();
+
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), 'editMessageText')
+                && str_contains((string) $request['text'], 'کلید IranRouter تنظیم نشده');
         });
     }
 
@@ -621,6 +640,37 @@ class TelegramWebhookTest extends TestCase
                 return Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200);
             }
 
+            if (str_contains($url, 'iranrouter.net') && str_contains($url, 'chat/completions')) {
+                $body = $request->body();
+
+                if (str_contains($body, 'You write a short Persian baseline document')) {
+                    return Http::response([
+                        'choices' => [
+                            ['message' => ['content' => 'داکیومنت مبنای تست برای acme/app']],
+                        ],
+                    ], 200);
+                }
+
+                $score = 0;
+
+                if (preg_match('/\+(\d+)\s+-/', $body, $matches) === 1) {
+                    $score = (int) $matches[1];
+                }
+
+                return Http::response([
+                    'choices' => [
+                        ['message' => ['content' => json_encode([
+                            'score' => $score,
+                            'reason' => 'test',
+                        ], JSON_UNESCAPED_UNICODE)]],
+                    ],
+                ], 200);
+            }
+
+            if (str_contains($url, '/repos/acme/app/readme')) {
+                return Http::response('# acme/app', 200);
+            }
+
             if (preg_match('#/repos/acme/app/commits/([a-z0-9-]+)$#', $url, $matches) === 1) {
                 $sha = $matches[1];
                 $summary = collect($summaries)->firstWhere('sha', $sha) ?? $summaries[0];
@@ -628,8 +678,8 @@ class TelegramWebhookTest extends TestCase
                 return Http::response([
                     ...$summary,
                     'files' => [
-                        ['filename' => 'app/Services/Feature.php', 'additions' => $details[$sha] ?? 0],
-                        ['filename' => 'vendor/laravel/framework/src/Support/Str.php', 'additions' => 4000],
+                        ['filename' => 'app/Services/Feature.php', 'additions' => $details[$sha] ?? 0, 'deletions' => 0],
+                        ['filename' => 'vendor/laravel/framework/src/Support/Str.php', 'additions' => 4000, 'deletions' => 0],
                     ],
                 ], 200);
             }
@@ -668,6 +718,7 @@ class TelegramWebhookTest extends TestCase
             'parents' => $parentList,
             'author' => ['login' => $login],
             'commit' => [
+                'message' => "commit {$sha}",
                 'author' => [
                     'email' => $email,
                     'name' => $name,

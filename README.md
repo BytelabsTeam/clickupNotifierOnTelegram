@@ -69,17 +69,18 @@ POST /api/webhooks/telegram
 
 ### گیت‌هاب (برترین‌ها)
 
-رتبه‌بندی بر اساس **امتیاز** است: خطوط اضافه‌شده/حذف‌شده (با ضریب پروژه)، شامل CSS/فرانت، بدون `vendor`/`node_modules` و بدون فایل‌های پیش‌فرض لاراول. کامیت‌های merge حساب نمی‌شوند.
+رتبه‌بندی بر اساس **امتیاز LLM** برای هر کامیت است (۰ تا ۵۰۰۰). ورودی مدل: متن کامیت + خلاصه diff + داکیومنت مبنای پروژه. فقط کارهای واقعاً خفن نزدیک سقف امتیاز می‌گیرند. فقط کامیت‌های **ماه جاری** امتیاز می‌گیرند و در دیتابیس ذخیره می‌شوند؛ اجرای بعدی فقط کامیت‌های جدید را می‌سنجد. کامیت‌های merge حساب نمی‌شوند.
 
 در `.env`:
 
 ```env
 GITHUB_TOKEN=github_pat_...
 GITHUB_REPOS=org/app,https://github.com/org/api
-GITHUB_DEFAULT_WEIGHT=0.8
-GITHUB_REPO_WEIGHTS={"BytelabsTeam/AdsPlatform":1.2,"BytelabsTeam/MegaShop":0.8}
-GITHUB_IGNORE_DELETIONS_REPOS=BytelabsTeam/AdsPlatformIran
 GITHUB_USER_LOGINS='{"arefmohaamd332@gmail.com":"aref-github","ali@example.com":"ali-github"}'
+
+IRANROUTER_API_KEY=ir-...
+IRANROUTER_BASE_URL=https://www.iranrouter.net/api/v1
+IRANROUTER_MODEL=openai/gpt-6-luna
 ```
 
 - توکن را از [Fine-grained personal access tokens](https://github.com/settings/personal-access-tokens/new) بسازید.
@@ -87,14 +88,31 @@ GITHUB_USER_LOGINS='{"arefmohaamd332@gmail.com":"aref-github","ali@example.com":
   - Repository access: فقط ریپوهای لیست‌شده در `GITHUB_REPOS`
   - Permissions → Repository: **Contents = Read-only**
 - `GITHUB_REPOS` را با ویرگول جدا کنید (`owner/repo` یا لینک کامل).
-- `GITHUB_IGNORE_DELETIONS_REPOS` ریپوهایی که خطوط حذف‌شده‌شان امتیاز نگیرند (فقط addition). با ویرگول یا JSON.
 - `GITHUB_USER_LOGINS` یوزرنیم گیت‌هاب را به همان ایمیلی وصل می‌کند که در `CLICKUP_USER_NAMES` و `TELEGRAM_USERNAMES` دارید تا اسم فارسی و تگ تلگرام درست نمایش داده شود.
+- کلید IranRouter را از داشبورد [iranrouter.net](https://www.iranrouter.net/) بگیرید (API سازگار با OpenAI).
+- داکیومنت مبنای هر ریپو یک‌بار با LLM ساخته و ذخیره می‌شود. برای بازسازی دستی:
+
+```bash
+php artisan github:regenerate-scoring-doc owner/repo
+```
+
+همگام‌سازی امتیازها (بدون تلگرام):
+
+```bash
+php artisan github:score-commits
+```
+
+یا Cron URL:
+
+```
+https://yourdomain.com/clickup_notif_on_telegram/cron/github-score-commits?token=CLICKUP_CRON_TOKEN
+```
 
 بعد از تغییر دستورها یک‌بار وبهوک را دوباره ست کنید تا منوی ربات به‌روز شود.
 
 ## اعلان کامیت‌های GitHub
 
-هر کامیت جدید (غیر از merge) در گروه تلگرام اعلام می‌شود؛ متن کامیت به فارسی ترجمه می‌شود:
+هر کامیت جدید (غیر از merge) در گروه تلگرام اعلام می‌شود؛ متن کامیت با IranRouter (`gpt-6-luna`) به فارسی ترجمه می‌شود:
 
 ```
 عارف توسعه داد:

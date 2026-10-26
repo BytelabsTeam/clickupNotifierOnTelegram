@@ -16,10 +16,6 @@ class GitHubClient
 
     private const DETAIL_POOL_SIZE = 10;
 
-    public function __construct(private readonly LocScoreFilter $locScoreFilter)
-    {
-    }
-
     /**
      * @return list<array{owner: string, name: string}>
      */
@@ -290,18 +286,27 @@ class GitHubClient
 
     /**
      * @return array{
-     *     commits: list<array{login: ?string, email: ?string, name: ?string, additions: int, committed_at: string}>,
+     *     commits: list<array{
+     *         sha: string,
+     *         repo: string,
+     *         login: ?string,
+     *         email: ?string,
+     *         name: ?string,
+     *         message: string,
+     *         committed_at: string,
+     *         files: list<array{filename: string, additions: int, deletions: int}>
+     *     }>,
      *     skipped: list<array{repo: string, reason: string}>
      * }
      */
-    public function commitAdditions(Carbon $from, Carbon $to): array
+    public function scoreableCommits(Carbon $from, Carbon $to): array
     {
         $token = $this->requireToken();
         $commits = [];
         $skipped = [];
         $repos = $this->repos();
 
-        Log::info('GitHub scoring started', [
+        Log::info('GitHub scoreable commits started', [
             'from' => $from->toIso8601String(),
             'to' => $to->toIso8601String(),
             'repos' => array_map(
@@ -317,7 +322,7 @@ class GitHubClient
                 $summaries = $this->listCommits($token, $repo['owner'], $repo['name'], $from, $to);
                 $shas = $this->scoreableShas($summaries);
 
-                Log::info("GitHub scoring {$slug}", [
+                Log::info("GitHub scoreable commits {$slug}", [
                     'listed' => count($summaries),
                     'details' => count($shas),
                 ]);
@@ -338,30 +343,31 @@ class GitHubClient
                     continue;
                 }
 
-                $weight = $this->repoWeight($repo['owner'], $repo['name']);
-                $countDeletions = ! $this->ignoresDeletions($repo['owner'], $repo['name']);
-
                 foreach ($details as $detail) {
-                    $score = $this->scoreFiles($detail['files'] ?? [], $weight, $countDeletions);
+                    $sha = (string) ($detail['sha'] ?? '');
 
-                    if ($score <= 0) {
+                    if ($sha === '') {
                         continue;
                     }
 
                     $commit = is_array($detail['commit'] ?? null) ? $detail['commit'] : [];
                     $author = is_array($detail['author'] ?? null) ? $detail['author'] : [];
                     $gitAuthor = is_array($commit['author'] ?? null) ? $commit['author'] : [];
+                    $message = trim((string) ($commit['message'] ?? ''));
 
                     $commits[] = [
+                        'sha' => $sha,
+                        'repo' => $slug,
                         'login' => isset($author['login']) ? (string) $author['login'] : null,
                         'email' => isset($gitAuthor['email']) ? (string) $gitAuthor['email'] : null,
                         'name' => isset($gitAuthor['name']) ? (string) $gitAuthor['name'] : null,
-                        'additions' => $score,
+                        'message' => $message,
                         'committed_at' => (string) ($gitAuthor['date'] ?? ''),
+                        'files' => $this->normalizeFiles($detail['files'] ?? []),
                     ];
                 }
             } catch (Throwable $exception) {
-                Log::warning("GitHub scoring failed for {$slug}: ".$exception->getMessage(), [
+                Log::warning("GitHub scoreable commits failed for {$slug}: ".$exception->getMessage(), [
                     'exception' => $exception::class,
                 ]);
                 $skipped[] = [
@@ -371,7 +377,7 @@ class GitHubClient
             }
         }
 
-        Log::info('GitHub scoring finished', [
+        Log::info('GitHub scoreable commits finished', [
             'commits' => count($commits),
             'skipped' => $skipped,
         ]);
@@ -380,6 +386,123 @@ class GitHubClient
             'commits' => $commits,
             'skipped' => $skipped,
         ];
+    }
+
+    /**
+     * README (or short root tree) used as raw context for project scoring docs.
+     */
+    public function fetchRepoContext(string $owner, string $name): string
+    {
+        $token = $this->requireToken();
+        $readme = $this->fetchReadme($token, $owner, $name);
+
+        if ($readme !== '') {
+            return $readme;
+        }
+
+        return $this->fetchRootTreeSummary($token, $owner, $name);
+    }
+
+    private function fetchReadme(string $token, string $owner, string $name): string
+    {
+        try {
+            $response = $this->github($token)
+                ->withHeaders(['Accept' => 'application/vnd.github.raw'])
+                ->get("https://api.github.com/repos/{$owner}/{$name}/readme");
+
+            if (! $response->successful()) {
+                return '';
+            }
+
+            $body = trim($response->body());
+
+            if ($body === '') {
+                return '';
+            }
+
+            return mb_substr($body, 0, 12000);
+        } catch (Throwable $exception) {
+            Log::warning("GitHub README fetch failed for {$owner}/{$name}: ".$exception->getMessage());
+
+            return '';
+        }
+    }
+
+    private function fetchRootTreeSummary(string $token, string $owner, string $name): string
+    {
+        try {
+            $response = $this->github($token)->get("https://api.github.com/repos/{$owner}/{$name}/contents/");
+
+            if (! $response->successful()) {
+                return "Repository: {$owner}/{$name}";
+            }
+
+            $items = $response->json();
+
+            if (! is_array($items)) {
+                return "Repository: {$owner}/{$name}";
+            }
+
+            $lines = ["Repository: {$owner}/{$name}", 'Root entries:'];
+
+            foreach ($items as $item) {
+                if (! is_array($item)) {
+                    continue;
+                }
+
+                $entryName = (string) ($item['name'] ?? '');
+                $type = (string) ($item['type'] ?? 'file');
+
+                if ($entryName === '') {
+                    continue;
+                }
+
+                $lines[] = "- [{$type}] {$entryName}";
+
+                if (count($lines) >= 40) {
+                    break;
+                }
+            }
+
+            return implode("\n", $lines);
+        } catch (Throwable $exception) {
+            Log::warning("GitHub root tree fetch failed for {$owner}/{$name}: ".$exception->getMessage());
+
+            return "Repository: {$owner}/{$name}";
+        }
+    }
+
+    /**
+     * @param  mixed  $files
+     * @return list<array{filename: string, additions: int, deletions: int}>
+     */
+    private function normalizeFiles(mixed $files): array
+    {
+        if (! is_array($files)) {
+            return [];
+        }
+
+        $normalized = [];
+
+        foreach ($files as $file) {
+            if (! is_array($file)) {
+                continue;
+            }
+
+            $filename = (string) ($file['filename'] ?? '');
+
+            if ($filename === '') {
+                continue;
+            }
+
+            $normalized[] = [
+                'filename' => $filename,
+                'additions' => max(0, (int) ($file['additions'] ?? 0)),
+                'deletions' => max(0, (int) ($file['deletions'] ?? 0)),
+            ];
+        }
+
+        return $normalized;
     }
 
     private function humanizeGithubFailure(Throwable $exception): string
@@ -436,56 +559,6 @@ class GitHubClient
         }
 
         return $shas;
-    }
-
-    /**
-     * @param  list<mixed>  $files
-     */
-    private function scoreFiles(array $files, float $weight = 1.0, bool $countDeletions = true): int
-    {
-        $score = 0;
-
-        foreach ($files as $file) {
-            if (! is_array($file)) {
-                continue;
-            }
-
-            $path = (string) ($file['filename'] ?? '');
-
-            if ($path === '' || ! $this->locScoreFilter->counts($path)) {
-                continue;
-            }
-
-            $score += max(0, (int) ($file['additions'] ?? 0));
-
-            if ($countDeletions) {
-                $score += max(0, (int) ($file['deletions'] ?? 0)) * 2;
-            }
-        }
-
-        return (int) round($score * $weight);
-    }
-
-    public function repoWeight(string $owner, string $name): float
-    {
-        $key = mb_strtolower(trim($owner).'/'.trim($name));
-        $weights = config('github.repo_weights', []);
-
-        if (is_array($weights) && isset($weights[$key]) && is_numeric($weights[$key])) {
-            return (float) $weights[$key];
-        }
-
-        $default = config('github.default_weight', 0.8);
-
-        return is_numeric($default) ? (float) $default : 0.8;
-    }
-
-    public function ignoresDeletions(string $owner, string $name): bool
-    {
-        $key = mb_strtolower(trim($owner).'/'.trim($name));
-        $repos = config('github.ignore_deletions_repos', []);
-
-        return is_array($repos) && isset($repos[$key]);
     }
 
     /**
