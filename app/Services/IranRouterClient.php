@@ -10,23 +10,27 @@ class IranRouterClient
     /**
      * @param  list<array{role: string, content: string}>  $messages
      */
-    public function chat(array $messages, ?float $temperature = 0.2, ?int $maxTokens = 1024): string
+    public function chat(array $messages, ?int $maxTokens = 1024): string
     {
         $apiKey = $this->requireApiKey();
         $baseUrl = (string) config('iranrouter.base_url');
         $model = (string) config('iranrouter.model', 'openai/gpt-6-luna');
         $timeout = max(5, (int) config('iranrouter.timeout', 60));
 
+        $payload = [
+            'model' => $model,
+            'messages' => $messages,
+        ];
+
+        if ($maxTokens !== null) {
+            $payload['max_tokens'] = $maxTokens;
+        }
+
         $response = Http::withToken($apiKey)
             ->acceptJson()
             ->timeout($timeout)
             ->connectTimeout(10)
-            ->post("{$baseUrl}/chat/completions", [
-                'model' => $model,
-                'temperature' => $temperature,
-                'max_tokens' => $maxTokens,
-                'messages' => $messages,
-            ]);
+            ->post("{$baseUrl}/chat/completions", $payload);
 
         if (! $response->successful()) {
             $body = mb_substr($response->body(), 0, 300);

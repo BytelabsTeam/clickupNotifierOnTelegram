@@ -85,7 +85,7 @@ class CommitMessageTranslator
                     'role' => 'user',
                     'content' => $text,
                 ],
-            ], 0.2, 200);
+            ], 200);
 
             $translated = trim($translated, " \t\n\r\0\x0B\"'«»");
 

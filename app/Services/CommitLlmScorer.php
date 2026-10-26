@@ -41,7 +41,7 @@ class CommitLlmScorer
                     "Diff summary:\n{$diffSummary}",
                 ]),
             ],
-        ], 0.1, 400);
+        ], 400);
 
         return $this->parseScore($raw);
     }

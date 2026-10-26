@@ -33,6 +33,7 @@ class IranRouterClientTest extends TestCase
         Http::assertSent(function ($request) {
             return $request->url() === 'https://www.iranrouter.net/api/v1/chat/completions'
                 && $request['model'] === 'openai/gpt-6-luna'
+                && ! array_key_exists('temperature', $request->data())
                 && ($request->header('Authorization')[0] ?? '') === 'Bearer ir-test-key';
         });
     }

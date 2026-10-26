@@ -63,7 +63,7 @@ class ProjectScoringDocService
                 'role' => 'user',
                 'content' => "Repo: {$repo}\n\nSource material:\n{$context}",
             ],
-        ], 0.3, 1200);
+        ], 1200);
 
         if ($content === '') {
             throw new RuntimeException("Failed to generate scoring doc for {$repo}");
