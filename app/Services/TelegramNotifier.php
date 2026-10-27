@@ -71,20 +71,63 @@ class TelegramNotifier
         return $messageId;
     }
 
-    public function edit(string|int $chatId, int $messageId, string $text): void
+    public function edit(string|int $chatId, int $messageId, string $text, ?array $replyMarkup = null): void
     {
         $chunks = $this->chunkText($text);
         $first = $chunks[0] ?? $text;
 
-        $this->postForm('editMessageText', [
+        $payload = [
             'chat_id' => $chatId,
             'message_id' => $messageId,
             'text' => $first,
-        ]);
+        ];
+
+        if ($replyMarkup !== null) {
+            $payload['reply_markup'] = json_encode($replyMarkup, JSON_UNESCAPED_UNICODE);
+        }
+
+        $this->postForm('editMessageText', $payload);
 
         foreach (array_slice($chunks, 1) as $chunk) {
             $this->reply($chatId, $chunk);
         }
+    }
+
+    /**
+     * @param  list<list<array{text: string, callback_data: string}>>  $inlineKeyboard
+     */
+    public function sendWithInlineKeyboard(string $text, array $inlineKeyboard): ?int
+    {
+        [, $chatId] = $this->credentials();
+
+        $json = $this->postForm('sendMessage', $this->applyThreadId([
+            'chat_id' => $chatId,
+            'text' => $text,
+            'reply_markup' => json_encode([
+                'inline_keyboard' => $inlineKeyboard,
+            ], JSON_UNESCAPED_UNICODE),
+        ], config('telegram.message_thread_id')));
+
+        $id = $json['result']['message_id'] ?? null;
+
+        return is_numeric($id) ? (int) $id : null;
+    }
+
+    public function answerCallbackQuery(string $callbackQueryId, string $text = '', bool $showAlert = false): void
+    {
+        $payload = [
+            'callback_query_id' => $callbackQueryId,
+        ];
+
+        if ($text !== '') {
+            $payload['text'] = $text;
+        }
+
+        if ($showAlert) {
+            $payload['show_alert'] = 'true';
+        }
+
+        $this->postForm('answerCallbackQuery', $payload);
     }
 
     /**
@@ -99,7 +142,7 @@ class TelegramNotifier
         $response = Http::asForm()->post("https://api.telegram.org/bot{$token}/setWebhook", [
             'url' => $url,
             'secret_token' => $secret,
-            'allowed_updates' => json_encode(['message']),
+            'allowed_updates' => json_encode(['message', 'callback_query']),
             'drop_pending_updates' => 'true',
         ]);
 

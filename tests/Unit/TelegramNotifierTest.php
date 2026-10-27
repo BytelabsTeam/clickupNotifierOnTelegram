@@ -60,6 +60,53 @@ class TelegramNotifierTest extends TestCase
         });
     }
 
+    public function test_it_sends_inline_keyboard_and_returns_message_id(): void
+    {
+        Http::fake([
+            'api.telegram.org/*' => Http::response([
+                'ok' => true,
+                'result' => ['message_id' => 88],
+            ], 200),
+        ]);
+
+        $messageId = app(TelegramNotifier::class)->sendWithInlineKeyboard('صبح بخیر', [
+            [['text' => 'شروع کار', 'callback_data' => 'work_start']],
+        ]);
+
+        $this->assertSame(88, $messageId);
+
+        Http::assertSent(function ($request) {
+            $markup = json_decode((string) $request['reply_markup'], true);
+
+            return $request->url() === 'https://api.telegram.org/bot123456:telegram-token/sendMessage'
+                && $request['text'] === 'صبح بخیر'
+                && ($markup['inline_keyboard'][0][0]['callback_data'] ?? null) === 'work_start';
+        });
+    }
+
+    public function test_register_webhook_allows_callback_query_updates(): void
+    {
+        Http::fake([
+            'api.telegram.org/*/setWebhook' => Http::response(['ok' => true], 200),
+            'api.telegram.org/*/setMyCommands' => Http::response(['ok' => true], 200),
+            'api.telegram.org/*/getWebhookInfo' => Http::response(['ok' => true, 'result' => []], 200),
+        ]);
+
+        app(TelegramNotifier::class)->registerBotWebhook();
+
+        Http::assertSent(function ($request) {
+            if (! str_contains($request->url(), 'setWebhook')) {
+                return false;
+            }
+
+            $allowed = json_decode((string) $request['allowed_updates'], true);
+
+            return is_array($allowed)
+                && in_array('message', $allowed, true)
+                && in_array('callback_query', $allowed, true);
+        });
+    }
+
     public function test_it_appends_project_tag_below_message(): void
     {
         config([

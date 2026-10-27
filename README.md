@@ -53,6 +53,38 @@ POST /api/webhooks/telegram
 
 امضای هدر `X-Telegram-Bot-Api-Secret-Token` با `TELEGRAM_WEBHOOK_SECRET` بررسی می‌شود.
 
+وبهوک باید `callback_query` را هم بپذیرد (برای دکمه «شروع کار»). بعد از آپدیت کد یک‌بار وبهوک را دوباره ثبت کنید.
+
+### صبح‌بخیر و ثبت شروع کار
+
+هر روز ساعت **۹ صبح** به وقت `Asia/Tehran` پیام «صبح بخیر» با تگ همه (`TELEGRAM_USERNAMES`) و دکمه **شروع کار** به گروه می‌رود. با زدن دکمه، ساعت شروع همان روز در دیتابیس ثبت می‌شود و همان پیام ویرایش می‌شود تا لیست شروع‌کرده‌ها دیده شود (پیام جدید فرستاده نمی‌شود).
+
+در cPanel یک Cron Job بسازید (ساعت ۹ صبح به وقت سرور / تهران):
+
+```
+0 9 * * *
+```
+
+آدرس فایل داخل پروژه (بدون روت لاراول):
+
+```
+https://yourdomain.com/clickup_notif_on_telegram/cron/morning-checkin.php?token=CLICKUP_CRON_TOKEN
+```
+
+یا با PHP CLI:
+
+```bash
+php /home/USER/public_html/clickup_notif_on_telegram/cron/morning-checkin.php
+```
+
+تست دستی:
+
+```bash
+php cron/morning-checkin.php
+# یا
+php artisan telegram:morning-checkin
+```
+
 در گروه تنظیم‌شده یا در چت خصوصی (اگر یوزرنیم‌تان در `TELEGRAM_USERNAMES` باشد) می‌توانید بزنید:
 
 | دستور | معادل فارسی | کار |

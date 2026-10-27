@@ -12,6 +12,7 @@ class TelegramBotHandler
     public function __construct(
         private readonly ClickUpTaskListService $taskListService,
         private readonly GitHubLeaderboardService $gitHubLeaderboard,
+        private readonly NotifyMorningCheckIn $morningCheckIn,
         private readonly TelegramNotifier $telegramNotifier,
     ) {
     }
@@ -22,6 +23,14 @@ class TelegramBotHandler
     public function handle(array $update): void
     {
         if (! $this->claimUpdate($update)) {
+            return;
+        }
+
+        $callback = $update['callback_query'] ?? null;
+
+        if (is_array($callback)) {
+            $this->handleCallbackQuery($callback);
+
             return;
         }
 
@@ -115,6 +124,57 @@ class TelegramBotHandler
         } catch (\Throwable $exception) {
             report($exception);
             $this->telegramNotifier->reply($chatId, $reply, $threadId);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $callback
+     */
+    private function handleCallbackQuery(array $callback): void
+    {
+        $callbackId = (string) ($callback['id'] ?? '');
+        $data = (string) ($callback['data'] ?? '');
+        $message = $callback['message'] ?? null;
+        $from = $callback['from'] ?? null;
+
+        if ($callbackId === '' || ! is_array($message) || ! is_array($from)) {
+            return;
+        }
+
+        $chatId = $message['chat']['id'] ?? null;
+        $messageId = $message['message_id'] ?? null;
+        $allowedChatId = (string) config('telegram.chat_id', '');
+
+        if ($chatId === null || $chatId === '' || ! is_numeric($messageId)) {
+            return;
+        }
+
+        if ($allowedChatId === '' || (string) $chatId !== $allowedChatId) {
+            $this->telegramNotifier->answerCallbackQuery($callbackId, 'این دکمه فقط در گروه تنظیم‌شده کار می‌کند.', true);
+
+            return;
+        }
+
+        if ($data !== NotifyMorningCheckIn::CALLBACK_DATA) {
+            $this->telegramNotifier->answerCallbackQuery($callbackId);
+
+            return;
+        }
+
+        try {
+            $result = $this->morningCheckIn->recordStart($from);
+            $this->telegramNotifier->answerCallbackQuery($callbackId, $result['toast']);
+
+            if ($result['created']) {
+                $this->morningCheckIn->refreshMessage($chatId, (int) $messageId);
+            }
+        } catch (\Throwable $exception) {
+            report($exception);
+            $this->telegramNotifier->answerCallbackQuery(
+                $callbackId,
+                'خطا در ثبت: '.$this->publicError($exception),
+                true
+            );
         }
     }
 
