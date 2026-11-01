@@ -55,4 +55,5 @@ return [
     'ignore_deletions_repos' => $ignoreDeletionsRepos,
     'commit_poll_lookback_minutes' => (int) env('GITHUB_COMMIT_POLL_LOOKBACK_MINUTES', 15),
     'commit_poll_interval_seconds' => (int) env('GITHUB_COMMIT_POLL_INTERVAL', 60),
+    'score_lookback_hours' => (int) env('GITHUB_SCORE_LOOKBACK_HOURS', 6),
 ];

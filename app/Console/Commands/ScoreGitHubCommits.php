@@ -9,7 +9,7 @@ class ScoreGitHubCommits extends Command
 {
     protected $signature = 'github:score-commits';
 
-    protected $description = 'Score new current-month GitHub commits with IranRouter LLM and store results';
+    protected $description = 'Score recent (default last 6h) unscored GitHub commits with IranRouter LLM and store results';
 
     public function handle(CommitScoreSyncService $sync): int
     {

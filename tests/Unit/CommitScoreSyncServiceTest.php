@@ -38,8 +38,10 @@ class CommitScoreSyncServiceTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_it_scores_only_new_current_month_commits(): void
+    public function test_it_scores_only_new_commits_from_lookback_window(): void
     {
+        config(['github.score_lookback_hours' => 6]);
+
         CommitScore::query()->create([
             'sha' => 'already',
             'repo' => 'acme/app',
@@ -48,7 +50,7 @@ class CommitScoreSyncServiceTest extends TestCase
             'name' => 'Dev',
             'message' => 'old',
             'score' => 100,
-            'committed_at' => '2026-09-10 08:00:00',
+            'committed_at' => '2026-09-16 08:00:00',
             'month' => '1405-06',
         ]);
 
@@ -64,7 +66,9 @@ class CommitScoreSyncServiceTest extends TestCase
         $gitHub->shouldReceive('scoreableCommits')
             ->once()
             ->withArgs(function ($from, $to, $excludeKeys = []): bool {
-                return isset($excludeKeys['acme/app|already']);
+                return $from->equalTo(Carbon::parse('2026-09-16 04:00:00', 'UTC'))
+                    && $to->equalTo(Carbon::parse('2026-09-16 10:00:00', 'UTC'))
+                    && isset($excludeKeys['acme/app|already']);
             })
             ->andReturn([
                 'commits' => [

@@ -19,23 +19,28 @@ class CommitScoreSyncService
     }
 
     /**
-     * Score only current-month commits that are not stored yet.
+     * Score recent commits (default: last 6 hours) that are not stored yet.
      *
      * @return array{scored: int, skipped: list<array{repo: string, reason: string}>}
      */
     public function syncCurrentMonth(?Carbon $now = null): array
     {
-        $bounds = JalaliCalendar::currentMonth($now);
-        $from = $bounds['from'];
-        $to = $bounds['to'];
-        $month = $bounds['key'];
+        $timezone = JalaliCalendar::timezone();
+        $now = ($now ?? Carbon::now($timezone))->copy()->timezone($timezone);
+        $lookbackHours = max(1, (int) config('github.score_lookback_hours', 6));
+        $from = $now->copy()->subHours($lookbackHours);
+        $to = $now->copy();
+        $month = JalaliCalendar::monthKey($now);
 
-        $lock = Cache::lock('github:score-sync:'.$month, 300);
+        $lock = Cache::lock('github:score-sync:recent', 300);
 
         try {
-            // Non-blocking: overlapping cron/leaderboard must not queue another full GitHub crawl.
+            // Non-blocking: overlapping cron must not queue another GitHub crawl.
             if (! $lock->get()) {
-                Log::info('Commit score sync skipped; another run holds the lock', ['month' => $month]);
+                Log::info('Commit score sync skipped; another run holds the lock', [
+                    'from' => $from->toIso8601String(),
+                    'to' => $to->toIso8601String(),
+                ]);
 
                 return [
                     'scored' => 0,
@@ -47,7 +52,7 @@ class CommitScoreSyncService
         }
 
         try {
-            return $this->syncCurrentMonthLocked($from, $to, $month);
+            return $this->syncRecentLocked($from, $to, $month);
         } finally {
             try {
                 $lock->release();
@@ -60,7 +65,7 @@ class CommitScoreSyncService
     /**
      * @return array{scored: int, skipped: list<array{repo: string, reason: string}>}
      */
-    private function syncCurrentMonthLocked(Carbon $from, Carbon $to, string $month): array
+    private function syncRecentLocked(Carbon $from, Carbon $to, string $month): array
     {
         try {
             $this->gitHubClient->requireToken();
@@ -81,9 +86,10 @@ class CommitScoreSyncService
             ];
         }
 
-        // Skip GitHub commit-detail fetches for SHAs we already scored this month.
+        // Skip GitHub commit-detail fetches for SHAs already stored in this window.
         $existingKeys = CommitScore::query()
-            ->where('month', $month)
+            ->whereNotNull('committed_at')
+            ->where('committed_at', '>=', $from->copy()->utc())
             ->get(['sha', 'repo'])
             ->mapWithKeys(static fn (CommitScore $row): array => [
                 mb_strtolower($row->repo).'|'.$row->sha => true,
@@ -127,6 +133,13 @@ class CommitScoreSyncService
                 }
 
                 if ($committedAt !== null && ($committedAt->lt($from) || $committedAt->gt($to))) {
+                    continue;
+                }
+
+                // Extra safety if a row exists outside the preloaded window.
+                if (CommitScore::query()->where('sha', $sha)->where('repo', $repo)->exists()) {
+                    $existingKeys[$key] = true;
+
                     continue;
                 }
 
@@ -176,7 +189,8 @@ class CommitScoreSyncService
         }
 
         Log::info('Commit score sync finished', [
-            'month' => $month,
+            'from' => $from->toIso8601String(),
+            'to' => $to->toIso8601String(),
             'scored' => $scored,
             'skipped' => count($skipped),
         ]);
