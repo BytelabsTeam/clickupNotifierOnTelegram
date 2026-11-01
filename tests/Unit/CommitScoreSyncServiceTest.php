@@ -61,43 +61,28 @@ class CommitScoreSyncServiceTest extends TestCase
         $gitHub = Mockery::mock(GitHubClient::class);
         $gitHub->shouldReceive('requireToken')->andReturn('ghp_test_token');
         $gitHub->shouldReceive('repos')->andReturn([['owner' => 'acme', 'name' => 'app']]);
-        $gitHub->shouldReceive('scoreableCommits')->once()->andReturn([
-            'commits' => [
-                [
-                    'sha' => 'already',
-                    'repo' => 'acme/app',
-                    'login' => 'dev',
-                    'email' => 'dev@example.com',
-                    'name' => 'Dev',
-                    'message' => 'old',
-                    'committed_at' => '2026-09-10T08:00:00Z',
-                    'files' => [],
-                ],
-                [
-                    'sha' => 'newsha',
-                    'repo' => 'acme/app',
-                    'login' => 'dev',
-                    'email' => 'dev@example.com',
-                    'name' => 'Dev',
-                    'message' => 'feat: new',
-                    'committed_at' => '2026-09-16T09:00:00Z',
-                    'files' => [
-                        ['filename' => 'a.php', 'additions' => 10, 'deletions' => 1],
+        $gitHub->shouldReceive('scoreableCommits')
+            ->once()
+            ->withArgs(function ($from, $to, $excludeKeys = []): bool {
+                return isset($excludeKeys['acme/app|already']);
+            })
+            ->andReturn([
+                'commits' => [
+                    [
+                        'sha' => 'newsha',
+                        'repo' => 'acme/app',
+                        'login' => 'dev',
+                        'email' => 'dev@example.com',
+                        'name' => 'Dev',
+                        'message' => 'feat: new',
+                        'committed_at' => '2026-09-16T09:00:00Z',
+                        'files' => [
+                            ['filename' => 'a.php', 'additions' => 10, 'deletions' => 1],
+                        ],
                     ],
                 ],
-                [
-                    'sha' => 'oldmonth',
-                    'repo' => 'acme/app',
-                    'login' => 'dev',
-                    'email' => 'dev@example.com',
-                    'name' => 'Dev',
-                    'message' => 'ancient',
-                    'committed_at' => '2026-08-15T09:00:00Z',
-                    'files' => [],
-                ],
-            ],
-            'skipped' => [],
-        ]);
+                'skipped' => [],
+            ]);
 
         $scorer = Mockery::mock(CommitLlmScorer::class);
         $scorer->shouldReceive('score')
@@ -120,9 +105,6 @@ class CommitScoreSyncServiceTest extends TestCase
             'repo' => 'acme/app',
             'score' => 900,
             'month' => '1405-06',
-        ]);
-        $this->assertDatabaseMissing('commit_scores', [
-            'sha' => 'oldmonth',
         ]);
         $this->assertSame(1, CommitScore::query()->where('sha', 'already')->count());
     }

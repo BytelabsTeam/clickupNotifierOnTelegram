@@ -10,9 +10,6 @@ use Carbon\Carbon;
 class GitHubLeaderboardService
 {
     public function __construct(
-        private readonly GitHubClient $gitHubClient,
-        private readonly CommitScoreSyncService $commitScoreSyncService,
-        private readonly TaskScoreSyncService $taskScoreSyncService,
         private readonly ScoreIdentityResolver $scoreIdentityResolver,
         private readonly UserNameResolver $userNameResolver,
         private readonly TelegramUsernameResolver $telegramUsernameResolver,
@@ -47,38 +44,14 @@ class GitHubLeaderboardService
 
     private function format(Carbon $from, Carbon $to, string $title): string
     {
-        $hasGithub = $this->gitHubClient->repos() !== [];
+        $hasGithub = $this->githubConfigured();
         $hasClickUp = $this->clickUpClient->isConfigured();
 
         if (! $hasGithub && ! $hasClickUp) {
             return $title.":\nنه GitHub و نه ClickUp برای امتیازدهی تنظیم شده.";
         }
 
-        $skipped = [];
-
-        if ($hasGithub) {
-            try {
-                $this->gitHubClient->requireToken();
-            } catch (\RuntimeException) {
-                return $title.":\nتوکن گیت‌هاب تنظیم نشده. GITHUB_TOKEN را در .env بگذار.";
-            }
-        }
-
-        try {
-            app(IranRouterClient::class)->requireApiKey();
-        } catch (\RuntimeException) {
-            return $title.":\nکلید IranRouter تنظیم نشده. IRANROUTER_API_KEY را در .env بگذار.";
-        }
-
-        if ($hasGithub) {
-            $sync = $this->commitScoreSyncService->syncCurrentMonth();
-            $skipped = $sync['skipped'] ?? [];
-        }
-
-        if ($hasClickUp) {
-            $this->taskScoreSyncService->syncCurrentMonth();
-        }
-
+        // Leaderboard is DB-only. Scoring runs via cron (github:score-commits / clickup:score-tasks).
         $month = JalaliCalendar::monthKey(Carbon::now($this->timezone()));
         $counts = [];
 
@@ -119,13 +92,7 @@ class GitHubLeaderboardService
         }
 
         if ($counts === []) {
-            $empty = $title.":\nدر این بازه امتیازی ثبت نشده.";
-
-            if ($skipped !== []) {
-                $empty .= $this->skippedFooter($skipped);
-            }
-
-            return $empty.$this->scoringRulesFooter();
+            return $title.":\nدر این بازه امتیازی ثبت نشده.".$this->scoringRulesFooter();
         }
 
         uasort($counts, static function (array $a, array $b): int {
@@ -148,13 +115,7 @@ class GitHubLeaderboardService
             $rank++;
         }
 
-        $message = implode("\n", $lines);
-
-        if ($skipped !== []) {
-            $message .= $this->skippedFooter($skipped);
-        }
-
-        return $message.$this->scoringRulesFooter();
+        return implode("\n", $lines).$this->scoringRulesFooter();
     }
 
     /**
@@ -177,29 +138,19 @@ class GitHubLeaderboardService
         $counts[$identity['key']]['lines'] += $score;
     }
 
-    /**
-     * @param  list<array{repo: string, reason: string}>  $skipped
-     */
-    private function skippedFooter(array $skipped): string
+    private function githubConfigured(): bool
     {
-        $lines = [];
+        $token = config('github.token');
 
-        foreach ($skipped as $item) {
-            $repo = is_array($item) ? (string) ($item['repo'] ?? '') : (string) $item;
-            $reason = is_array($item) ? (string) ($item['reason'] ?? '') : '';
-
-            if ($repo === '') {
-                continue;
-            }
-
-            $lines[] = $reason !== '' ? "{$repo} — {$reason}" : $repo;
+        if (! is_string($token) || $token === '') {
+            return false;
         }
 
-        if ($lines === []) {
-            return '';
-        }
+        $org = config('github.org');
+        $repos = config('github.repos', []);
 
-        return "\n\nاین ریپوها امتیازگیری نشدند:\n- ".implode("\n- ", $lines);
+        return (is_string($org) && trim($org) !== '')
+            || (is_array($repos) && $repos !== []);
     }
 
     private function scoringRulesFooter(): string

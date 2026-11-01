@@ -33,8 +33,9 @@ class CommitScoreSyncService
         $lock = Cache::lock('github:score-sync:'.$month, 300);
 
         try {
-            if (! $lock->block(180)) {
-                Log::warning('Commit score sync lock timeout', ['month' => $month]);
+            // Non-blocking: overlapping cron/leaderboard must not queue another full GitHub crawl.
+            if (! $lock->get()) {
+                Log::info('Commit score sync skipped; another run holds the lock', ['month' => $month]);
 
                 return [
                     'scored' => 0,
@@ -80,7 +81,16 @@ class CommitScoreSyncService
             ];
         }
 
-        $result = $this->gitHubClient->scoreableCommits($from, $to);
+        // Skip GitHub commit-detail fetches for SHAs we already scored this month.
+        $existingKeys = CommitScore::query()
+            ->where('month', $month)
+            ->get(['sha', 'repo'])
+            ->mapWithKeys(static fn (CommitScore $row): array => [
+                mb_strtolower($row->repo).'|'.$row->sha => true,
+            ])
+            ->all();
+
+        $result = $this->gitHubClient->scoreableCommits($from, $to, $existingKeys);
         $commits = $result['commits'] ?? [];
         /** @var list<array{repo: string, reason: string}> $skipped */
         $skipped = $result['skipped'] ?? [];
@@ -91,14 +101,6 @@ class CommitScoreSyncService
                 'skipped' => $skipped,
             ];
         }
-
-        $existingKeys = CommitScore::query()
-            ->where('month', $month)
-            ->get(['sha', 'repo'])
-            ->mapWithKeys(static fn (CommitScore $row): array => [
-                mb_strtolower($row->repo).'|'.$row->sha => true,
-            ])
-            ->all();
 
         $docs = [];
         $scored = 0;

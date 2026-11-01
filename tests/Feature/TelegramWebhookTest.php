@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\CommitScore;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -197,7 +198,11 @@ class TelegramWebhookTest extends TestCase
 
     public function test_it_ranks_github_llm_scores_for_day_week_and_month(): void
     {
-        $this->fakeGithubCommits();
+        $this->seedLeaderboardCommitScores();
+
+        Http::fake([
+            'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200),
+        ]);
 
         $this->postSignedWebhook($this->commandUpdate('/topday'))->assertOk();
 
@@ -220,6 +225,10 @@ class TelegramWebhookTest extends TestCase
                 && str_contains($text, 'کامیت GitHub با LLM')
                 && str_contains($text, 'تسک Done غیرکدی ClickUp')
                 && ! str_contains($text, 'Hamid');
+        });
+
+        Http::assertNotSent(function ($request) {
+            return str_contains($request->url(), 'api.github.com');
         });
 
         $this->postSignedWebhook($this->commandUpdate('/topweek'))->assertOk();
@@ -251,9 +260,10 @@ class TelegramWebhookTest extends TestCase
         });
     }
 
-    public function test_it_asks_for_iranrouter_key_when_missing(): void
+    public function test_it_reads_leaderboard_without_iranrouter_key(): void
     {
         config(['iranrouter.api_key' => '']);
+        $this->seedLeaderboardCommitScores();
 
         Http::fake([
             'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200),
@@ -263,7 +273,7 @@ class TelegramWebhookTest extends TestCase
 
         Http::assertSent(function ($request) {
             return str_contains($request->url(), 'editMessageText')
-                && str_contains((string) $request['text'], 'کلید IranRouter تنظیم نشده');
+                && str_contains((string) $request['text'], '🥇 عارف (@aref_telegram) — 800 امتیاز');
         });
     }
 
@@ -290,9 +300,12 @@ class TelegramWebhookTest extends TestCase
         $this->assertSame(1, $helpSends);
     }
 
-    public function test_it_asks_for_github_token_when_missing(): void
+    public function test_it_shows_empty_leaderboard_when_github_token_missing_and_no_scores(): void
     {
-        config(['github.token' => '']);
+        config([
+            'github.token' => '',
+            'clickup.api_token' => '',
+        ]);
 
         Http::fake([
             'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200),
@@ -301,36 +314,28 @@ class TelegramWebhookTest extends TestCase
         $this->postSignedWebhook($this->commandUpdate('/topday'))->assertOk();
 
         Http::assertSent(function ($request) {
-            return str_contains($request->url(), 'sendMessage')
-                && str_contains((string) $request['text'], 'در حال محاسبه امتیاز');
-        });
-
-        Http::assertSent(function ($request) {
             return str_contains($request->url(), 'editMessageText')
-                && str_contains((string) $request['text'], 'توکن گیت‌هاب تنظیم نشده');
+                && str_contains((string) $request['text'], 'نه GitHub و نه ClickUp برای امتیازدهی تنظیم شده');
         });
     }
 
-    public function test_it_edits_progress_when_github_repos_are_inaccessible(): void
+    public function test_it_shows_empty_leaderboard_from_database_without_github_calls(): void
     {
-        Http::fake(function ($request) {
-            if (str_contains($request->url(), 'api.telegram.org')) {
-                return Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200);
-            }
-
-            if (str_contains($request->url(), 'api.clickup.com')) {
-                return Http::response(['tasks' => []], 200);
-            }
-
-            return Http::response(['message' => 'Not Found'], 404);
-        });
+        Http::fake([
+            'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200),
+        ]);
 
         $this->postSignedWebhook($this->commandUpdate('/topday'))->assertOk();
 
         Http::assertSent(function ($request) {
             return str_contains($request->url(), 'editMessageText')
-                && str_contains((string) $request['text'], 'در این بازه امتیازی ثبت نشده')
-                && str_contains((string) $request['text'], 'acme/app');
+                && str_contains((string) $request['text'], 'در این بازه امتیازی ثبت نشده');
+        });
+
+        Http::assertNotSent(function ($request) {
+            return str_contains($request->url(), 'api.github.com')
+                || str_contains($request->url(), 'api.clickup.com')
+                || str_contains($request->url(), 'iranrouter.net');
         });
     }
 
@@ -644,121 +649,28 @@ class TelegramWebhookTest extends TestCase
         });
     }
 
-    private function fakeGithubCommits(): void
+    private function seedLeaderboardCommitScores(): void
     {
-        $summaries = [
-            $this->githubCommitSummary('today-aref', '2026-09-16T08:00:00Z', 'arefdev', 'arefmohaamd332@gmail.com', 'Aref', 1),
-            $this->githubCommitSummary('today-ali', '2026-09-16T09:00:00Z', 'alidev', 'ali@example.com', 'Ali', 1),
-            $this->githubCommitSummary('week-aref', '2026-09-14T12:00:00Z', 'arefdev', 'arefmohaamd332@gmail.com', 'Aref', 1),
-            $this->githubCommitSummary('month-ali', '2026-09-03T12:00:00Z', 'alidev', 'ali@example.com', 'Ali', 1),
-            $this->githubCommitSummary('old-hamid', '2026-08-15T12:00:00Z', 'hamiddev', 'hamid@example.com', 'Hamid', 1),
-            $this->githubCommitSummary('merge', '2026-09-16T11:00:00Z', 'arefdev', 'arefmohaamd332@gmail.com', 'Aref', 2),
+        $rows = [
+            ['sha' => 'today-aref', 'login' => 'arefdev', 'email' => 'arefmohaamd332@gmail.com', 'name' => 'Aref', 'score' => 800, 'committed_at' => '2026-09-16 08:00:00', 'month' => '1405-06'],
+            ['sha' => 'today-ali', 'login' => 'alidev', 'email' => 'ali@example.com', 'name' => 'Ali', 'score' => 300, 'committed_at' => '2026-09-16 09:00:00', 'month' => '1405-06'],
+            ['sha' => 'week-aref', 'login' => 'arefdev', 'email' => 'arefmohaamd332@gmail.com', 'name' => 'Aref', 'score' => 400, 'committed_at' => '2026-09-14 12:00:00', 'month' => '1405-06'],
+            ['sha' => 'month-ali', 'login' => 'alidev', 'email' => 'ali@example.com', 'name' => 'Ali', 'score' => 100, 'committed_at' => '2026-09-03 12:00:00', 'month' => '1405-06'],
+            ['sha' => 'old-hamid', 'login' => 'hamiddev', 'email' => 'hamid@example.com', 'name' => 'Hamid', 'score' => 5000, 'committed_at' => '2026-08-15 12:00:00', 'month' => '1405-05'],
         ];
 
-        $details = [
-            'today-aref' => 800,
-            'today-ali' => 300,
-            'week-aref' => 400,
-            'month-ali' => 100,
-            'old-hamid' => 5000,
-        ];
-
-        Http::fake(function ($request) use ($summaries, $details) {
-            $url = $request->url();
-
-            if (str_contains($url, 'api.telegram.org')) {
-                return Http::response(['ok' => true, 'result' => ['message_id' => 99]], 200);
-            }
-
-            if (str_contains($url, 'api.clickup.com')) {
-                return Http::response(['tasks' => []], 200);
-            }
-
-            if (str_contains($url, 'iranrouter.net') && str_contains($url, 'chat/completions')) {
-                $body = $request->body();
-
-                if (str_contains($body, 'You write a short Persian baseline document')) {
-                    return Http::response([
-                        'choices' => [
-                            ['message' => ['content' => 'داکیومنت مبنای تست برای acme/app']],
-                        ],
-                    ], 200);
-                }
-
-                $score = 0;
-
-                if (preg_match('/\+(\d+)\s+-/', $body, $matches) === 1) {
-                    $score = (int) $matches[1];
-                }
-
-                return Http::response([
-                    'choices' => [
-                        ['message' => ['content' => json_encode([
-                            'score' => $score,
-                            'reason' => 'test',
-                        ], JSON_UNESCAPED_UNICODE)]],
-                    ],
-                ], 200);
-            }
-
-            if (str_contains($url, '/repos/acme/app/readme')) {
-                return Http::response('# acme/app', 200);
-            }
-
-            if (preg_match('#/repos/acme/app/commits/([a-z0-9-]+)$#', $url, $matches) === 1) {
-                $sha = $matches[1];
-                $summary = collect($summaries)->firstWhere('sha', $sha) ?? $summaries[0];
-
-                return Http::response([
-                    ...$summary,
-                    'files' => [
-                        ['filename' => 'app/Services/Feature.php', 'additions' => $details[$sha] ?? 0, 'deletions' => 0],
-                        ['filename' => 'vendor/laravel/framework/src/Support/Str.php', 'additions' => 4000, 'deletions' => 0],
-                    ],
-                ], 200);
-            }
-
-            if (str_contains($url, '/repos/acme/app/commits')) {
-                return Http::response($summaries, 200);
-            }
-
-            if (preg_match('#/repos/acme/app$#', (string) parse_url($url, PHP_URL_PATH)) === 1) {
-                return Http::response(['default_branch' => 'main'], 200);
-            }
-
-            return Http::response(['message' => 'Not Found'], 404);
-        });
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function githubCommitSummary(
-        string $sha,
-        string $date,
-        string $login,
-        string $email,
-        string $name,
-        int $parents,
-    ): array {
-        $parentList = [];
-
-        for ($i = 0; $i < $parents; $i++) {
-            $parentList[] = ['sha' => 'parent-'.$i];
+        foreach ($rows as $row) {
+            CommitScore::query()->create([
+                'sha' => $row['sha'],
+                'repo' => 'acme/app',
+                'login' => $row['login'],
+                'email' => $row['email'],
+                'name' => $row['name'],
+                'message' => 'commit '.$row['sha'],
+                'score' => $row['score'],
+                'committed_at' => $row['committed_at'],
+                'month' => $row['month'],
+            ]);
         }
-
-        return [
-            'sha' => $sha,
-            'parents' => $parentList,
-            'author' => ['login' => $login],
-            'commit' => [
-                'message' => "commit {$sha}",
-                'author' => [
-                    'email' => $email,
-                    'name' => $name,
-                    'date' => $date,
-                ],
-            ],
-        ];
     }
 }

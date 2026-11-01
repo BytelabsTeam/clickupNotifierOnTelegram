@@ -285,6 +285,7 @@ class GitHubClient
     }
 
     /**
+     * @param  array<string, bool>  $excludeKeys  Keys already scored: "{repo}|{sha}" (repo lowercased)
      * @return array{
      *     commits: list<array{
      *         sha: string,
@@ -299,7 +300,7 @@ class GitHubClient
      *     skipped: list<array{repo: string, reason: string}>
      * }
      */
-    public function scoreableCommits(Carbon $from, Carbon $to): array
+    public function scoreableCommits(Carbon $from, Carbon $to, array $excludeKeys = []): array
     {
         $token = $this->requireToken();
         $commits = [];
@@ -309,6 +310,7 @@ class GitHubClient
         Log::info('GitHub scoreable commits started', [
             'from' => $from->toIso8601String(),
             'to' => $to->toIso8601String(),
+            'exclude' => count($excludeKeys),
             'repos' => array_map(
                 static fn (array $repo): string => $repo['owner'].'/'.$repo['name'],
                 $repos
@@ -320,7 +322,7 @@ class GitHubClient
 
             try {
                 $summaries = $this->listCommits($token, $repo['owner'], $repo['name'], $from, $to);
-                $shas = $this->scoreableShas($summaries);
+                $shas = $this->scoreableShas($summaries, $slug, $excludeKeys);
 
                 Log::info("GitHub scoreable commits {$slug}", [
                     'listed' => count($summaries),
@@ -522,7 +524,15 @@ class GitHubClient
         }
 
         if (preg_match('/\b403\b/', $message) === 1 || str_contains($message, 'Forbidden')) {
+            if (str_contains(mb_strtolower($message), 'rate limit') || str_contains($message, 'API rate limit')) {
+                return 'محدودیت نرخ GitHub (rate limit)';
+            }
+
             return 'توکن مجاز نیست (403)';
+        }
+
+        if (str_contains(mb_strtolower($message), 'rate limit')) {
+            return 'محدودیت نرخ GitHub (rate limit)';
         }
 
         if (preg_match('/\b401\b/', $message) === 1 || str_contains($message, 'Bad credentials')) {
@@ -534,11 +544,13 @@ class GitHubClient
 
     /**
      * @param  list<array<string, mixed>>  $summaries
+     * @param  array<string, bool>  $excludeKeys
      * @return list<string>
      */
-    private function scoreableShas(array $summaries): array
+    private function scoreableShas(array $summaries, string $repoSlug, array $excludeKeys = []): array
     {
         $shas = [];
+        $repoKey = mb_strtolower($repoSlug);
 
         foreach ($summaries as $summary) {
             if (count($summary['parents'] ?? []) > 1) {
@@ -548,6 +560,10 @@ class GitHubClient
             $sha = (string) ($summary['sha'] ?? '');
 
             if ($sha === '') {
+                continue;
+            }
+
+            if (isset($excludeKeys[$repoKey.'|'.$sha])) {
                 continue;
             }
 

@@ -141,6 +141,51 @@ class GitHubClientTest extends TestCase
         $this->assertSame([], $result['commits']);
     }
 
+    public function test_it_skips_detail_fetches_for_excluded_shas(): void
+    {
+        config([
+            'github.token' => 'ghp_test_token',
+            'github.org' => '',
+            'github.repos' => ['acme/app'],
+        ]);
+
+        Http::fake(function ($request) {
+            $url = $request->url();
+
+            if (preg_match('#/repos/acme/app/commits/[a-z0-9]+$#', $url) === 1) {
+                return Http::response(['message' => 'should not fetch details'], 500);
+            }
+
+            if (str_contains($url, '/repos/acme/app/commits')) {
+                return Http::response([
+                    [
+                        'sha' => 'already',
+                        'parents' => [['sha' => 'parent']],
+                    ],
+                ], 200);
+            }
+
+            return Http::response(['message' => 'Not Found'], 404);
+        });
+
+        $result = app(GitHubClient::class)->scoreableCommits(
+            Carbon::parse('2026-09-16 00:00:00'),
+            Carbon::parse('2026-09-16 23:59:59'),
+            ['acme/app|already' => true],
+        );
+
+        $this->assertSame([], $result['commits']);
+        $this->assertSame([], $result['skipped']);
+
+        Http::assertSent(function ($request): bool {
+            return str_contains($request->url(), '/repos/acme/app/commits')
+                && ! preg_match('#/commits/[a-z0-9]+$#', $request->url());
+        });
+        Http::assertNotSent(function ($request): bool {
+            return (bool) preg_match('#/repos/acme/app/commits/[a-z0-9]+$#', $request->url());
+        });
+    }
+
     public function test_it_fetches_readme_as_repo_context(): void
     {
         config(['github.token' => 'ghp_test_token']);
