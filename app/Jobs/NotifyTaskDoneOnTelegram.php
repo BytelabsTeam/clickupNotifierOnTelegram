@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\TaskScore;
 use App\Services\ClickUpClient;
 use App\Services\TaskScoreSyncService;
 use App\Services\TelegramNotifier;
@@ -28,25 +29,38 @@ class NotifyTaskDoneOnTelegram implements ShouldQueue
         TelegramNotifier $telegramNotifier,
         TaskScoreSyncService $taskScoreSyncService,
     ): void {
-        $cacheKey = 'clickup_webhook:'.$this->idempotencyKey;
+        $notifyCacheKey = 'clickup_webhook:'.$this->idempotencyKey;
+        $alreadyNotified = Cache::has($notifyCacheKey);
+        $alreadyScored = TaskScore::query()->where('task_id', $this->taskId)->exists();
 
-        if (! Cache::add($cacheKey, true, now()->addDays(7))) {
+        if ($alreadyNotified && $alreadyScored) {
+            return;
+        }
+
+        $task = $clickUpClient->getTask($this->taskId);
+
+        if (! $alreadyScored) {
+            try {
+                $taskScoreSyncService->scoreTaskIfNeeded($task, $this->email, $this->username);
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+        }
+
+        if ($alreadyNotified) {
+            return;
+        }
+
+        if (! Cache::add($notifyCacheKey, true, now()->addDays(7))) {
             return;
         }
 
         $displayName = $userNameResolver->resolve($this->email, $this->username);
-        $task = $clickUpClient->getTask($this->taskId);
         $taskName = (string) ($task['name'] ?? $this->taskId);
         $projectTag = $clickUpClient->resolveProjectTag($task);
         $message = $telegramNotifier->formatMessage($displayName, $taskName, $projectTag);
         $media = $clickUpClient->extractMediaAttachments($task['attachments'] ?? []);
 
         $telegramNotifier->send($message, $media);
-
-        try {
-            $taskScoreSyncService->scoreTaskIfNeeded($task, $this->email, $this->username);
-        } catch (\Throwable $exception) {
-            report($exception);
-        }
     }
 }

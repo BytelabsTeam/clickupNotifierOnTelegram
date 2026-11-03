@@ -155,6 +155,8 @@ class TelegramNotifier
                 ['command' => 'tomorrow', 'description' => 'تسک‌های امروز، فردا و عقب‌افتاده'],
                 ['command' => 'overdue', 'description' => 'تسک‌های عقب‌افتاده'],
                 ['command' => 'me', 'description' => 'فقط تسک‌های خودت'],
+                ['command' => 'myscore', 'description' => 'امتیاز خودت با جزئیات'],
+                ['command' => 'highlight', 'description' => 'خفن‌ترین کار امروز'],
                 ['command' => 'topday', 'description' => 'برترین‌های امروز'],
                 ['command' => 'topweek', 'description' => 'برترین‌های این هفته'],
                 ['command' => 'topmonth', 'description' => 'برترین‌های این ماه'],

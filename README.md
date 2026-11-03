@@ -97,7 +97,27 @@ php artisan telegram:morning-checkin
 | `/topday` | برترین روز | بیشترین امتیاز امروز |
 | `/topweek` | برترین هفته | بیشترین امتیاز این هفته |
 | `/topmonth` | برترین ماه | بیشترین امتیاز این ماه شمسی (به وقت ایران) |
+| `/myscore` | امتیاز من | جزئیات امتیاز خودت (امروز؛ با `week`/`month` هم می‌شود) |
+| `/highlight` | خفن امروز | خفن‌ترین کار ثبت‌شده امروز |
+| `/fixscore` | — | ادمین: `/fixscore TASK_ID 1500 دلیل` |
+| `/uncode` | — | ادمین: تسک را غیرکدی کن |
+| `/markcode` | — | ادمین: تسک را کدی علامت بزن (امتیاز ۰) |
 | `/help` | راهنما | لیست دستورها |
+
+ادمین‌ها را در `.env` با `TELEGRAM_ADMIN_USERNAMES` مشخص کنید (یوزرنیم تلگرام، با ویرگول).
+
+هایلایت روزانه (پیشنهاد: ۲۱:۰۰ تهران) با Cron URL:
+
+```
+https://yourdomain.com/clickup_notif_on_telegram/cron/daily-highlight?token=CLICKUP_CRON_TOKEN
+```
+
+یا:
+
+```bash
+php artisan telegram:daily-highlight
+```
+
 
 ### گیت‌هاب + ClickUp (برترین‌ها)
 
@@ -149,10 +169,11 @@ php artisan github:score-commits
 php artisan clickup:score-tasks
 ```
 
-یا Cron URL برای کامیت‌ها:
+Cron URLها (cPanel → Fetch URL؛ پیشنهاد: هر ۵–۱۵ دقیقه):
 
 ```
 https://yourdomain.com/clickup_notif_on_telegram/cron/github-score-commits?token=CLICKUP_CRON_TOKEN
+https://yourdomain.com/clickup_notif_on_telegram/cron/clickup-score-tasks?token=CLICKUP_CRON_TOKEN
 ```
 
 بعد از تغییر دستورها یک‌بار وبهوک را دوباره ست کنید تا منوی ربات به‌روز شود.

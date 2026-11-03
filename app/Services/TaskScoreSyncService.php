@@ -85,7 +85,12 @@ class TaskScoreSyncService
 
         try {
             app(IranRouterClient::class)->requireApiKey();
-        } catch (\RuntimeException) {
+        } catch (\RuntimeException $exception) {
+            Log::warning('Task score skipped; IranRouter not ready', [
+                'task_id' => $taskId,
+                'reason' => $exception->getMessage(),
+            ]);
+
             return null;
         }
 
@@ -190,11 +195,22 @@ class TaskScoreSyncService
 
         $result = $this->taskLlmScorer->score($taskName, $description, $projectContext);
 
+        // Do not persist parse failures — allow poll/cron to retry later.
+        if (in_array($result['reason'], ['parse_failed', 'invalid_score'], true)) {
+            Log::warning('Task score not stored; LLM response unusable', [
+                'task_id' => $taskId,
+                'task_name' => $taskName,
+                'reason' => $result['reason'],
+            ]);
+
+            return null;
+        }
+
         $canonicalEmail = $email !== null && $email !== ''
             ? $this->scoreIdentityResolver->canonicalizeEmail($email)
             : null;
 
-        return TaskScore::query()->updateOrCreate(
+        $row = TaskScore::query()->updateOrCreate(
             ['task_id' => $taskId],
             [
                 'email' => $canonicalEmail,
@@ -209,6 +225,23 @@ class TaskScoreSyncService
                 'month' => $month,
             ]
         );
+
+        if ($result['is_code']) {
+            Log::info('Task scored as code (leaderboard score 0; GitHub covers code work)', [
+                'task_id' => $taskId,
+                'task_name' => $taskName,
+                'reason' => $result['reason'],
+            ]);
+        } else {
+            Log::info('Task scored as non-code', [
+                'task_id' => $taskId,
+                'task_name' => $taskName,
+                'score' => $result['score'],
+                'reason' => $result['reason'],
+            ]);
+        }
+
+        return $row;
     }
 
     /**

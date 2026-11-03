@@ -12,6 +12,8 @@ class TelegramBotHandler
     public function __construct(
         private readonly ClickUpTaskListService $taskListService,
         private readonly GitHubLeaderboardService $gitHubLeaderboard,
+        private readonly ScoreReportService $scoreReportService,
+        private readonly ScoreOverrideService $scoreOverrideService,
         private readonly NotifyMorningCheckIn $morningCheckIn,
         private readonly TelegramNotifier $telegramNotifier,
     ) {
@@ -87,7 +89,7 @@ class TelegramBotHandler
         }
 
         try {
-            $reply = $this->responseFor($command, $fromUsername);
+            $reply = $this->responseFor($command, $fromUsername, $text);
         } catch (\Throwable $exception) {
             report($exception);
             $reply = 'خطا در اجرای دستور: '.$this->publicError($exception);
@@ -107,7 +109,7 @@ class TelegramBotHandler
         ignore_user_abort(true);
 
         try {
-            $reply = $this->responseFor($command, $fromUsername);
+            $reply = $this->responseFor($command, $fromUsername, '/'.$command);
         } catch (\Throwable $exception) {
             report($exception);
             $reply = 'خطا در محاسبه امتیاز: '.$this->publicError($exception);
@@ -211,7 +213,7 @@ class TelegramBotHandler
         return $message;
     }
 
-    private function responseFor(string $command, string $fromUsername): string
+    private function responseFor(string $command, string $fromUsername, string $rawText): string
     {
         return match ($command) {
             'start', 'help' => $this->helpText(),
@@ -220,11 +222,74 @@ class TelegramBotHandler
             'today' => $this->taskListService->formatDueToday(),
             'overdue' => $this->taskListService->formatOverdue(),
             'me' => $this->taskListService->formatForTelegramUsername($fromUsername),
+            'myscore' => $this->scoreReportService->formatMyScore(
+                $fromUsername,
+                $this->myscorePeriod($rawText)
+            ),
+            'highlight' => $this->scoreReportService->formatDailyHighlight(),
+            'fixscore' => $this->handleFixScore($rawText, $fromUsername),
+            'uncode' => $this->handleUncode($rawText, $fromUsername),
+            'markcode' => $this->handleMarkCode($rawText, $fromUsername),
             'topday' => $this->gitHubLeaderboard->formatTopToday(),
             'topweek' => $this->gitHubLeaderboard->formatTopWeek(),
             'topmonth' => $this->gitHubLeaderboard->formatTopMonth(),
             default => "دستور ناشناخته.\n".$this->helpText(),
         };
+    }
+
+    private function myscorePeriod(string $rawText): string
+    {
+        if (preg_match('/^\/myscore(?:@\w+)?\s+(week|month|today|هفته|ماه|امروز)\b/ui', $rawText, $matches) === 1) {
+            return match (mb_strtolower($matches[1])) {
+                'week', 'هفته' => 'week',
+                'month', 'ماه' => 'month',
+                default => 'today',
+            };
+        }
+
+        return 'today';
+    }
+
+    private function handleFixScore(string $rawText, string $fromUsername): string
+    {
+        if (preg_match('/^\/fixscore(?:@\w+)?\s+(\S+)\s+(\d+)(?:\s+(.+))?$/su', $rawText, $matches) !== 1) {
+            return "فرمت:\n/fixscore TASK_ID 1500 دلیل اختیاری";
+        }
+
+        $reason = isset($matches[3]) ? trim($matches[3]) : null;
+
+        return $this->scoreOverrideService->fixScore(
+            $matches[1],
+            (int) $matches[2],
+            $reason !== '' ? $reason : null,
+            $fromUsername,
+        );
+    }
+
+    private function handleUncode(string $rawText, string $fromUsername): string
+    {
+        if (preg_match('/^\/uncode(?:@\w+)?\s+(\S+)(?:\s+(\d+))?(?:\s+(.+))?$/su', $rawText, $matches) !== 1) {
+            return "فرمت:\n/uncode TASK_ID\nیا\n/uncode TASK_ID 1200 دلیل";
+        }
+
+        $score = isset($matches[2]) && $matches[2] !== '' ? (int) $matches[2] : null;
+        $reason = isset($matches[3]) ? trim($matches[3]) : null;
+
+        return $this->scoreOverrideService->uncode(
+            $matches[1],
+            $score,
+            $reason !== '' ? $reason : null,
+            $fromUsername,
+        );
+    }
+
+    private function handleMarkCode(string $rawText, string $fromUsername): string
+    {
+        if (preg_match('/^\/markcode(?:@\w+)?\s+(\S+)\s*$/su', $rawText, $matches) !== 1) {
+            return "فرمت:\n/markcode TASK_ID";
+        }
+
+        return $this->scoreOverrideService->markCode($matches[1], $fromUsername);
     }
 
     private function helpText(): string
@@ -238,12 +303,19 @@ class TelegramBotHandler
             '/tomorrow — تسک‌های امروز، فردا و عقب‌افتاده',
             '/overdue — فقط تسک‌های عقب‌افتاده',
             '/me — فقط تسک‌های خودت',
+            '/myscore — امتیاز خودت (امروز / هفته / ماه)',
+            '/highlight — خفن‌ترین کار امروز',
             '/topday — برترین‌های امروز',
             '/topweek — برترین‌های این هفته',
             '/topmonth — برترین‌های این ماه',
             '/help — همین راهنما',
             '',
-            'بدون اسلش هم می‌تونی بنویسی: لیست، امروز، فردا، عقب افتاده، برترین روز، برترین هفته، برترین ماه',
+            'ادمین:',
+            '/fixscore TASK_ID 1500 دلیل',
+            '/uncode TASK_ID [امتیاز] [دلیل]',
+            '/markcode TASK_ID',
+            '',
+            'بدون اسلش هم می‌تونی بنویسی: لیست، امروز، فردا، عقب افتاده، امتیاز من، خفن امروز، برترین روز',
         ]);
     }
 
@@ -254,6 +326,8 @@ class TelegramBotHandler
                 'top_day', 'daily' => 'topday',
                 'top_week', 'weekly' => 'topweek',
                 'top_month', 'monthly' => 'topmonth',
+                'my_score', 'score' => 'myscore',
+                'daily_highlight', 'bestday' => 'highlight',
                 default => strtolower($matches[1]),
             };
         }
@@ -267,6 +341,8 @@ class TelegramBotHandler
             'امروز', 'تسک های امروز' => 'today',
             'عقب افتاده', 'عقبافتاده' => 'overdue',
             'تسک های من' => 'me',
+            'امتیاز من', 'امتیازم' => 'myscore',
+            'خفن امروز', 'هایلایت' => 'highlight',
             'برترین روز', 'برترین های روز' => 'topday',
             'برترین هفته', 'برترین های هفته' => 'topweek',
             'برترین ماه', 'برترین های ماه' => 'topmonth',

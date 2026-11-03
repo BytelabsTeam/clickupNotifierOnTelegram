@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\CommitScore;
+use App\Models\TaskScore;
+use App\Support\JalaliCalendar;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -193,6 +195,42 @@ class TelegramWebhookTest extends TestCase
                 && str_contains($text, 'رفع باگ لاگین')
                 && ! str_contains($text, 'تسک علی')
                 && ! str_contains($text, 'علی (@ali_telegram):');
+        });
+    }
+
+    public function test_it_replies_with_myscore_breakdown(): void
+    {
+        $now = Carbon::now('UTC');
+        $month = JalaliCalendar::monthKey($now->copy()->timezone('UTC'));
+
+        TaskScore::query()->create([
+            'task_id' => 'design_1',
+            'email' => 'arefmohaamd332@gmail.com',
+            'username' => 'Aref',
+            'task_name' => 'طراحی لندینگ',
+            'is_code' => false,
+            'score' => 1100,
+            'reason' => 'طراحی تمیز',
+            'completed_at' => $now,
+            'month' => $month,
+        ]);
+
+        Http::fake([
+            'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 11]], 200),
+        ]);
+
+        $this->postSignedWebhook($this->commandUpdate('/myscore'))->assertOk();
+
+        Http::assertSent(function ($request) {
+            if (! str_contains($request->url(), 'sendMessage')) {
+                return false;
+            }
+
+            $text = (string) $request['text'];
+
+            return str_contains($text, 'امتیاز امروز')
+                && str_contains($text, 'طراحی لندینگ')
+                && str_contains($text, '1,100');
         });
     }
 

@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\ClickUpPollCronController;
+use App\Http\Controllers\ClickUpScoreCronController;
+use App\Http\Controllers\DailyHighlightCronController;
 use App\Http\Controllers\GitHubCommitsCronController;
 use App\Http\Controllers\GitHubScoreCronController;
 use App\Http\Controllers\MorningCheckInCronController;
@@ -14,10 +16,12 @@ Route::get('/', function () {
 });
 
 Route::get('/cron/clickup-poll', ClickUpPollCronController::class);
+Route::get('/cron/clickup-score-tasks', ClickUpScoreCronController::class);
 Route::get('/cron/github-commits', GitHubCommitsCronController::class);
 Route::get('/cron/github-score-commits', GitHubScoreCronController::class);
 Route::get('/cron/tomorrow-tasks', TomorrowTasksCronController::class);
 Route::get('/cron/morning-checkin', MorningCheckInCronController::class);
+Route::get('/cron/daily-highlight', DailyHighlightCronController::class);
 Route::get('/cron/newly-assigned-tasks', NewlyAssignedTasksCronController::class);
 Route::get('/telegram/set-webhook', RegisterTelegramWebhookCronController::class);
 Route::get('/cron/telegram-register-webhook', RegisterTelegramWebhookCronController::class);

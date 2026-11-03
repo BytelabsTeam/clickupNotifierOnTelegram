@@ -36,6 +36,46 @@ class TelegramUsernameResolver
         return null;
     }
 
+    public function emailForUsername(?string $telegramUsername): ?string
+    {
+        $username = mb_strtolower(ltrim(trim((string) $telegramUsername), '@'));
+
+        if ($username === '') {
+            return null;
+        }
+
+        foreach (config('telegram.usernames', []) as $mappedEmail => $mappedUsername) {
+            if (! is_string($mappedUsername) || $mappedUsername === '') {
+                continue;
+            }
+
+            if (mb_strtolower(ltrim(trim($mappedUsername), '@')) !== $username) {
+                continue;
+            }
+
+            return $this->scoreIdentityResolver->canonicalizeEmail((string) $mappedEmail);
+        }
+
+        return null;
+    }
+
+    public function isAdmin(?string $telegramUsername): bool
+    {
+        $username = mb_strtolower(ltrim(trim((string) $telegramUsername), '@'));
+
+        if ($username === '') {
+            return false;
+        }
+
+        foreach (config('telegram.admin_usernames', []) as $admin) {
+            if (mb_strtolower(ltrim(trim((string) $admin), '@')) === $username) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function formatDisplayName(string $displayName, ?string $email): string
     {
         $username = $this->resolve($email);

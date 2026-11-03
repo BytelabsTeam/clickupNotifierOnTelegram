@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\TaskScore;
 use App\Support\TaskDoneDetector;
 use Illuminate\Support\Facades\Cache;
 
@@ -23,6 +24,7 @@ class PollClickUpDoneTasks
         $sinceMs = $this->resolveSinceTimestampMs();
         $tasks = $this->clickUpClient->getTasksUpdatedSince($sinceMs);
         $notifiedCount = 0;
+        $seenTaskIds = [];
 
         foreach ($tasks as $task) {
             if (! is_array($task) || ! $this->taskDoneDetector->isApiTaskDone($task)) {
@@ -31,33 +33,48 @@ class PollClickUpDoneTasks
 
             $taskId = (string) ($task['id'] ?? '');
 
-            if ($taskId === '') {
+            if ($taskId === '' || isset($seenTaskIds[$taskId])) {
                 continue;
             }
 
-            $updatedAt = (string) ($task['date_updated'] ?? 'unknown');
-            $cacheKey = "clickup_poll:notified:{$taskId}:{$updatedAt}";
+            $seenTaskIds[$taskId] = true;
 
-            if (! Cache::add($cacheKey, true, now()->addDays(30))) {
+            $updatedAt = (string) ($task['date_updated'] ?? 'unknown');
+            $notifyCacheKey = "clickup_poll:notified:{$taskId}:{$updatedAt}";
+            $alreadyNotified = Cache::has($notifyCacheKey);
+            $alreadyScored = TaskScore::query()->where('task_id', $taskId)->exists();
+
+            // Skip only when both notify and score are already done.
+            if ($alreadyNotified && $alreadyScored) {
                 continue;
             }
 
             [$email, $username] = $this->resolveTaskUser($task);
-            $displayName = $this->userNameResolver->resolve($email, $username);
             $fullTask = $this->clickUpClient->getTask($taskId);
+
+            if (! $alreadyScored) {
+                try {
+                    $this->taskScoreSyncService->scoreTaskIfNeeded($fullTask, $email, $username);
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+            }
+
+            if ($alreadyNotified) {
+                continue;
+            }
+
+            if (! Cache::add($notifyCacheKey, true, now()->addDays(30))) {
+                continue;
+            }
+
+            $displayName = $this->userNameResolver->resolve($email, $username);
             $taskName = (string) ($fullTask['name'] ?? $task['name'] ?? $taskId);
             $projectTag = $this->clickUpClient->resolveProjectTag($fullTask);
             $message = $this->telegramNotifier->formatMessage($displayName, $taskName, $projectTag);
             $media = $this->clickUpClient->extractMediaAttachments($fullTask['attachments'] ?? []);
 
             $this->telegramNotifier->send($message, $media);
-
-            try {
-                $this->taskScoreSyncService->scoreTaskIfNeeded($fullTask, $email, $username);
-            } catch (\Throwable $exception) {
-                report($exception);
-            }
-
             $notifiedCount++;
         }
 

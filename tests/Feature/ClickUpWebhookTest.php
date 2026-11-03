@@ -2,16 +2,22 @@
 
 namespace Tests\Feature;
 
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class ClickUpWebhookTest extends TestCase
 {
+    use RefreshDatabase;
+
     private const WEBHOOK_SECRET = 'test-webhook-secret';
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        Cache::flush();
 
         config([
             'clickup.webhook_secret' => self::WEBHOOK_SECRET,
@@ -100,7 +106,12 @@ class ClickUpWebhookTest extends TestCase
         $this->postSignedWebhook($payload)->assertOk();
         $this->postSignedWebhook($payload)->assertOk();
 
-        Http::assertSentCount(2);
+        // Second webhook may re-fetch the task to retry scoring, but Telegram only once.
+        $telegramCount = collect(Http::recorded())
+            ->filter(static fn (array $pair): bool => str_contains($pair[0]->url(), 'api.telegram.org'))
+            ->count();
+
+        $this->assertSame(1, $telegramCount);
     }
 
     private function postSignedWebhook(array $payload)
