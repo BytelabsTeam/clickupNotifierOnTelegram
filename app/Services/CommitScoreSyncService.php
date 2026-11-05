@@ -154,6 +154,17 @@ class CommitScoreSyncService
                     is_array($commit['files'] ?? null) ? $commit['files'] : [],
                 );
 
+                // Unusable LLM output must not be stored as 0; the next cron run retries it.
+                if (in_array($scoredResult['reason'], ['parse_failed', 'invalid_score'], true)) {
+                    Log::warning('Commit score not stored; LLM response unusable', [
+                        'repo' => $repo,
+                        'sha' => $sha,
+                        'reason' => $scoredResult['reason'],
+                    ]);
+
+                    continue;
+                }
+
                 $commitMonth = $committedAt !== null
                     ? JalaliCalendar::monthKey($committedAt)
                     : $month;
@@ -169,6 +180,7 @@ class CommitScoreSyncService
                         'name' => $commit['name'] ?? null,
                         'message' => mb_substr((string) ($commit['message'] ?? ''), 0, 5000),
                         'score' => $scoredResult['score'],
+                        'reason' => $scoredResult['reason'] !== '' ? $scoredResult['reason'] : null,
                         'committed_at' => $committedAt,
                         'month' => $commitMonth,
                     ]

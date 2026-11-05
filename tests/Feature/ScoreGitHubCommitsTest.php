@@ -12,12 +12,16 @@ class ScoreGitHubCommitsTest extends TestCase
         parent::setUp();
 
         config([
-            'clickup.cron_token' => 'secret-cron-token',
+            'app.cron_token' => 'secret-cron-token',
         ]);
     }
 
     public function test_cron_endpoint_runs_score_sync_with_valid_token(): void
     {
+        $this->mock(\App\Services\NotifyScoredCommits::class, function ($mock): void {
+            $mock->shouldReceive('notify')->once()->andReturn(2);
+        });
+
         $this->mock(CommitScoreSyncService::class, function ($mock): void {
             $mock->shouldReceive('syncCurrentMonth')->once()->andReturn([
                 'scored' => 2,

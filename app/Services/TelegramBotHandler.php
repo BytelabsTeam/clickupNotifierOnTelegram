@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Jobs\FinishTelegramLeaderboard;
+use App\Models\TeamMember;
+use App\Models\TeamTask;
 use Illuminate\Support\Facades\Cache;
 
 class TelegramBotHandler
@@ -10,10 +12,13 @@ class TelegramBotHandler
     private const UPDATE_DEDUP_TTL_SECONDS = 600;
 
     public function __construct(
-        private readonly ClickUpTaskListService $taskListService,
+        private readonly TeamTaskService $teamTasks,
+        private readonly TeamIdentityService $identity,
+        private readonly TaskMenuService $taskMenu,
+        private readonly HistoryService $history,
+        private readonly ScoreChartService $scoreChart,
         private readonly GitHubLeaderboardService $gitHubLeaderboard,
         private readonly ScoreReportService $scoreReportService,
-        private readonly ScoreOverrideService $scoreOverrideService,
         private readonly NotifyMorningCheckIn $morningCheckIn,
         private readonly TelegramNotifier $telegramNotifier,
     ) {
@@ -48,6 +53,12 @@ class TelegramBotHandler
             return;
         }
 
+        // Team group is notification-only: commands there are ignored silently.
+        // All member actions (tasks, menu, history, scores) happen in a private chat with the bot.
+        if (($message['chat']['type'] ?? '') !== 'private') {
+            return;
+        }
+
         $command = $this->parseCommand($text);
 
         if ($command === null) {
@@ -61,16 +72,16 @@ class TelegramBotHandler
         }
 
         if (! $this->isAuthorized($message)) {
-            if (($message['chat']['type'] ?? '') === 'private') {
-                $this->telegramNotifier->reply($chatId, 'اجازه دسترسی به این ربات را نداری.');
-            }
+            $this->telegramNotifier->reply($chatId, 'اجازه دسترسی به این ربات را نداری.');
 
             return;
         }
 
         $threadId = $message['message_thread_id'] ?? null;
         $threadId = is_numeric($threadId) ? $threadId : null;
-        $fromUsername = (string) ($message['from']['username'] ?? '');
+        $from = is_array($message['from'] ?? null) ? $message['from'] : [];
+        $fromUsername = (string) ($from['username'] ?? '');
+
         $isLeaderboard = in_array($command, ['topday', 'topweek', 'topmonth'], true);
 
         if ($isLeaderboard) {
@@ -88,8 +99,15 @@ class TelegramBotHandler
             return;
         }
 
+        if (in_array($command, ['menu', 'mytasks'], true)) {
+            $this->sendTaskMenu($chatId, $threadId, $from);
+
+            return;
+        }
+
         try {
-            $reply = $this->responseFor($command, $fromUsername, $text);
+            $this->recordMember($from);
+            $reply = $this->responseFor($command, $fromUsername, $text, $from);
         } catch (\Throwable $exception) {
             report($exception);
             $reply = 'خطا در اجرای دستور: '.$this->publicError($exception);
@@ -145,12 +163,27 @@ class TelegramBotHandler
 
         $chatId = $message['chat']['id'] ?? null;
         $messageId = $message['message_id'] ?? null;
+        $chatType = (string) ($message['chat']['type'] ?? '');
         $allowedChatId = (string) config('telegram.chat_id', '');
 
         if ($chatId === null || $chatId === '' || ! is_numeric($messageId)) {
             return;
         }
 
+        // Task buttons live in private chat only (personal, per member).
+        if (str_starts_with($data, TaskMenuService::CALLBACK_PREFIX)) {
+            if ($chatType !== 'private') {
+                $this->telegramNotifier->answerCallbackQuery($callbackId, 'مدیریت تسک فقط داخل پیوی ربات انجام می‌شود.', true);
+
+                return;
+            }
+
+            $this->handleTaskCallback($callbackId, $chatId, (int) $messageId, $from, $data);
+
+            return;
+        }
+
+        // Morning check-in button lives in the team group only.
         if ($allowedChatId === '' || (string) $chatId !== $allowedChatId) {
             $this->telegramNotifier->answerCallbackQuery($callbackId, 'این دکمه فقط در گروه تنظیم‌شده کار می‌کند.', true);
 
@@ -178,6 +211,28 @@ class TelegramBotHandler
                 true
             );
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $from
+     */
+    private function sendTaskMenu(string|int $chatId, string|int|null $threadId, array $from): void
+    {
+        $menu = $this->taskMenu->menuFor($from);
+        $this->telegramNotifier->sendWithInlineKeyboard($menu['text'], $menu['keyboard'], $threadId);
+    }
+
+    /**
+     * @param  array<string, mixed>  $from
+     */
+    private function handleTaskCallback(string $callbackId, mixed $chatId, int $messageId, array $from, string $data): void
+    {
+        $result = $this->taskMenu->handleAction($from, $data);
+        $this->telegramNotifier->answerCallbackQuery($callbackId, $result['toast'], ! $result['changed']);
+
+        // Refresh the same menu message so the member sees the updated list.
+        $menu = $this->taskMenu->menuFor($from);
+        $this->telegramNotifier->edit($chatId, $messageId, $menu['text'], ['inline_keyboard' => $menu['keyboard']]);
     }
 
     /**
@@ -213,23 +268,55 @@ class TelegramBotHandler
         return $message;
     }
 
-    private function responseFor(string $command, string $fromUsername, string $rawText): string
+    private function historyPeriod(string $rawText): string
     {
+        if (preg_match('/^\/history(?:@\w+)?\s+(day|week|month|امروز|هفته|ماه)\b/ui', $rawText, $matches) === 1) {
+            return match (mb_strtolower($matches[1])) {
+                'week', 'هفته' => 'week',
+                'month', 'ماه' => 'month',
+                default => 'day',
+            };
+        }
+
+        return 'day';
+    }
+
+    /**
+     * @param  array<string, mixed>  $from
+     */
+    private function taskMenuReply(array $from): string
+    {
+        return $this->taskMenu->menuFor($from)['text'];
+    }
+
+    private function responseFor(string $command, string $fromUsername, string $rawText, array $from = []): string
+    {
+        $isAdmin = $this->isAdmin($from);
+
+        if ($command === 'assign') {
+            return $this->handleAssign($rawText, $from, $isAdmin);
+        }
+
         return match ($command) {
             'start', 'help' => $this->helpText(),
-            'tasks' => $this->taskListService->formatOpenTasks(),
-            'tomorrow' => $this->taskListService->formatDueThroughTomorrow(),
-            'today' => $this->taskListService->formatDueToday(),
-            'overdue' => $this->taskListService->formatOverdue(),
-            'me' => $this->taskListService->formatForTelegramUsername($fromUsername),
+            'tasks' => $this->teamTasks->listFor($from, $isAdmin),
+            'tomorrow' => $this->teamTasks->listFor($from, $isAdmin, 'open'),
+            'today' => $this->teamTasks->listFor($from, $isAdmin, 'today'),
+            'overdue' => $this->teamTasks->listFor($from, $isAdmin, 'overdue'),
+            'me' => $this->teamTasks->listFor($from, false),
+            'newtask' => $this->handleNewTask($rawText, $from),
+            'status' => $this->handleTaskStatus($rawText, $from, $isAdmin),
+            'menu', 'mytasks' => $this->taskMenuReply($from),
+            'history' => $this->history->format($this->historyPeriod($rawText)),
+            'historyweek' => $this->history->format('week'),
+            'historymonth' => $this->history->format('month'),
+            'chart' => $this->scoreChart->formatMonth(),
+            'team' => $isAdmin ? $this->teamTasks->listFor($from, true, 'all') : 'این دستور فقط برای ادمین اصلی است.',
             'myscore' => $this->scoreReportService->formatMyScore(
-                $fromUsername,
+                (int) ($from['id'] ?? 0),
                 $this->myscorePeriod($rawText)
             ),
             'highlight' => $this->scoreReportService->formatDailyHighlight(),
-            'fixscore' => $this->handleFixScore($rawText, $fromUsername),
-            'uncode' => $this->handleUncode($rawText, $fromUsername),
-            'markcode' => $this->handleMarkCode($rawText, $fromUsername),
             'topday' => $this->gitHubLeaderboard->formatTopToday(),
             'topweek' => $this->gitHubLeaderboard->formatTopWeek(),
             'topmonth' => $this->gitHubLeaderboard->formatTopMonth(),
@@ -250,67 +337,33 @@ class TelegramBotHandler
         return 'today';
     }
 
-    private function handleFixScore(string $rawText, string $fromUsername): string
-    {
-        if (preg_match('/^\/fixscore(?:@\w+)?\s+(\S+)\s+(\d+)(?:\s+(.+))?$/su', $rawText, $matches) !== 1) {
-            return "فرمت:\n/fixscore TASK_ID 1500 دلیل اختیاری";
-        }
 
-        $reason = isset($matches[3]) ? trim($matches[3]) : null;
 
-        return $this->scoreOverrideService->fixScore(
-            $matches[1],
-            (int) $matches[2],
-            $reason !== '' ? $reason : null,
-            $fromUsername,
-        );
-    }
-
-    private function handleUncode(string $rawText, string $fromUsername): string
-    {
-        if (preg_match('/^\/uncode(?:@\w+)?\s+(\S+)(?:\s+(\d+))?(?:\s+(.+))?$/su', $rawText, $matches) !== 1) {
-            return "فرمت:\n/uncode TASK_ID\nیا\n/uncode TASK_ID 1200 دلیل";
-        }
-
-        $score = isset($matches[2]) && $matches[2] !== '' ? (int) $matches[2] : null;
-        $reason = isset($matches[3]) ? trim($matches[3]) : null;
-
-        return $this->scoreOverrideService->uncode(
-            $matches[1],
-            $score,
-            $reason !== '' ? $reason : null,
-            $fromUsername,
-        );
-    }
-
-    private function handleMarkCode(string $rawText, string $fromUsername): string
-    {
-        if (preg_match('/^\/markcode(?:@\w+)?\s+(\S+)\s*$/su', $rawText, $matches) !== 1) {
-            return "فرمت:\n/markcode TASK_ID";
-        }
-
-        return $this->scoreOverrideService->markCode($matches[1], $fromUsername);
-    }
 
     private function helpText(): string
     {
         return implode("\n", [
-            'ربات ClickUp 👋',
+            'مدیر تسک تیم 👋',
             '',
             'دستورها:',
-            '/tasks — لیست تسک‌های باز',
+            '/tasks — تسک‌های باز (ادمین: کل تیم)',
             '/today — تسک‌های امروز',
             '/tomorrow — تسک‌های امروز، فردا و عقب‌افتاده',
             '/overdue — فقط تسک‌های عقب‌افتاده',
             '/me — فقط تسک‌های خودت',
+            '/newtask عنوان | توضیحات اختیاری | مهلت YYYY-MM-DD — ساخت تسک برای خودت',
+            '/status ID doing|done|todo — تغییر وضعیت تسک خودت',
             '/myscore — امتیاز خودت (امروز / هفته / ماه)',
             '/highlight — خفن‌ترین کار امروز',
             '/topday — برترین‌های امروز',
             '/topweek — برترین‌های این هفته',
             '/topmonth — برترین‌های این ماه',
+            '/chart — نمودار امتیاز ماه شمسی',
             '/help — همین راهنما',
             '',
             'ادمین:',
+            '/team — همه تسک‌های تیم',
+            '/assign ID @username — واگذاری تسک به عضوی که قبلاً /start زده',
             '/fixscore TASK_ID 1500 دلیل',
             '/uncode TASK_ID [امتیاز] [دلیل]',
             '/markcode TASK_ID',
@@ -327,6 +380,7 @@ class TelegramBotHandler
                 'top_week', 'weekly' => 'topweek',
                 'top_month', 'monthly' => 'topmonth',
                 'my_score', 'score' => 'myscore',
+                'new_task', 'addtask' => 'newtask',
                 'daily_highlight', 'bestday' => 'highlight',
                 default => strtolower($matches[1]),
             };
@@ -347,6 +401,7 @@ class TelegramBotHandler
             'برترین هفته', 'برترین های هفته' => 'topweek',
             'برترین ماه', 'برترین های ماه' => 'topmonth',
             'راهنما', 'کمک' => 'help',
+            'نمودار', 'نمودار ماه' => 'chart',
             default => null,
         };
     }
@@ -367,18 +422,102 @@ class TelegramBotHandler
             return false;
         }
 
-        $username = mb_strtolower(ltrim((string) ($message['from']['username'] ?? ''), '@'));
+        $telegramId = (string) ($message['from']['id'] ?? '');
 
-        if ($username === '') {
-            return false;
+        return $telegramId !== '' && $this->identity->isMember((int) $telegramId);
+    }
+
+    /** @param array<string, mixed> $from */
+    private function isAdmin(array $from): bool
+    {
+        $telegramId = (int) ($from['id'] ?? 0);
+
+        return $telegramId > 0 && $this->identity->isAdmin($telegramId);
+    }
+
+    /** @param array<string, mixed> $from */
+    private function handleNewTask(string $rawText, array $from): string
+    {
+        if (preg_match('/^\/newtask(?:@\w+)?\s+(.+)$/su', $rawText, $matches) !== 1) {
+            return "فرمت:\n/newtask عنوان | توضیحات اختیاری | مهلت YYYY-MM-DD";
         }
 
-        foreach (config('telegram.usernames', []) as $mapped) {
-            if (mb_strtolower(ltrim(trim((string) $mapped), '@')) === $username) {
-                return true;
-            }
+        $parts = array_map('trim', explode('|', $matches[1], 3));
+
+        try {
+            $task = $this->teamTasks->create($from, $parts[0] ?? '', $parts[1] ?? '', $parts[2] ?? null);
+
+            return "تسک #{$task->id} ساخته شد: {$task->title}";
+        } catch (\Throwable $exception) {
+            return 'ساخت تسک ناموفق بود: '.$this->publicError($exception);
+        }
+    }
+
+    /** @param array<string, mixed> $from */
+    private function handleTaskStatus(string $rawText, array $from, bool $admin): string
+    {
+        if (preg_match('/^\/status(?:@\w+)?\s+(\d+)\s+(todo|doing|done)$/iu', $rawText, $matches) !== 1) {
+            return "فرمت:\n/status ID todo|doing|done";
         }
 
-        return false;
+        try {
+            return $this->teamTasks->setStatus($from, $admin, (int) $matches[1], match (strtolower($matches[2])) {
+                'doing' => 'in_progress',
+                default => strtolower($matches[2]),
+            });
+        } catch (\Throwable $exception) {
+            return 'تغییر وضعیت ناموفق بود: '.$this->publicError($exception);
+        }
+    }
+
+    /** @param array<string, mixed> $from */
+    private function handleAssign(string $rawText, array $from, bool $admin): string
+    {
+        if (! $admin) {
+            return 'این دستور فقط برای ادمین اصلی است.';
+        }
+
+        if (preg_match('/^\/assign(?:@\w+)?\s+(\d+)\s+@?(\w+)$/u', $rawText, $matches) !== 1) {
+            return "فرمت:\n/assign ID @username";
+        }
+
+        $member = TeamMember::query()
+            ->where('is_active', true)
+            ->whereNotNull('telegram_user_id')
+            ->whereRaw('LOWER(telegram_username) = ?', [mb_strtolower($matches[2])])
+            ->first();
+
+        if ($member === null) {
+            return 'این یوزرنیم در لیست اعضای فعال تیم ثبت نشده یا هنوز آیدی تلگرامش مشخص نیست.';
+        }
+
+        return $this->teamTasks->assign((int) $matches[1], [
+            'id' => $member->telegram_user_id,
+            'username' => $member->telegram_username,
+            'first_name' => $member->display_name,
+        ]);
+    }
+
+    /** @param array<string, mixed> $from */
+    private function recordMember(array $from): void
+    {
+        $telegramId = (int) ($from['id'] ?? 0);
+
+        if ($telegramId <= 0) {
+            return;
+        }
+
+        $displayName = trim(implode(' ', array_filter([
+            (string) ($from['first_name'] ?? ''),
+            (string) ($from['last_name'] ?? ''),
+        ])));
+
+        // Only refresh metadata for already-registered members. Unknown senders are never auto-enrolled.
+        TeamMember::query()
+            ->where('telegram_user_id', $telegramId)
+            ->update([
+                'telegram_username' => isset($from['username']) ? (string) $from['username'] : null,
+                'last_seen_at' => now(),
+            ]);
     }
 }

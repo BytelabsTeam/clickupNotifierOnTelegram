@@ -3,7 +3,8 @@
 namespace Tests\Unit;
 
 use App\Models\CommitScore;
-use App\Models\TaskScore;
+use App\Models\TeamMember;
+use App\Models\TeamTask;
 use App\Services\ScoreReportService;
 use App\Support\JalaliCalendar;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -17,18 +18,7 @@ class ScoreReportServiceTest extends TestCase
     {
         parent::setUp();
 
-        config([
-            'app.timezone' => 'Asia/Tehran',
-            'telegram.usernames' => [
-                'aref@example.com' => 'aref_telegram',
-            ],
-            'clickup.user_names' => [
-                'aref@example.com' => 'عارف',
-            ],
-            'github.user_logins' => [
-                'aref@example.com' => 'DeAref',
-            ],
-        ]);
+        config(['app.timezone' => 'Asia/Tehran']);
     }
 
     public function test_it_formats_my_score_breakdown(): void
@@ -36,11 +26,18 @@ class ScoreReportServiceTest extends TestCase
         $now = now('Asia/Tehran');
         $month = JalaliCalendar::monthKey($now);
 
+        TeamMember::query()->create([
+            'telegram_user_id' => 1,
+            'telegram_username' => 'aref_telegram',
+            'github_login' => 'DeAref',
+            'display_name' => 'عارف',
+        ]);
+
         CommitScore::query()->create([
             'sha' => str_repeat('a', 40),
             'repo' => 'BytelabsTeam/MegaShop',
             'login' => 'DeAref',
-            'email' => 'aref@example.com',
+            'email' => null,
             'name' => 'Aref',
             'message' => "feat: checkout\n\nbody",
             'score' => 900,
@@ -48,44 +45,67 @@ class ScoreReportServiceTest extends TestCase
             'month' => $month,
         ]);
 
-        TaskScore::query()->create([
-            'task_id' => 'task_design',
-            'email' => 'aref@example.com',
-            'username' => 'Aref',
-            'name' => 'Aref',
-            'task_name' => 'طراحی بنر',
+        TeamTask::query()->create([
+            'title' => 'طراحی بنر',
+            'status' => 'done',
+            'priority' => 'normal',
+            'assignee_telegram_id' => 1,
+            'assignee_username' => 'aref_telegram',
+            'assignee_name' => 'عارف',
+            'created_by_telegram_id' => 1,
             'is_code' => false,
             'score' => 1200,
-            'reason' => 'کار خفن طراحی',
+            'score_reason' => 'کار خفن طراحی',
             'completed_at' => $now->copy()->utc(),
-            'month' => $month,
         ]);
 
-        $text = app(ScoreReportService::class)->formatMyScore('aref_telegram', 'today');
+        $text = app(ScoreReportService::class)->formatMyScore(1, 'today');
 
         $this->assertStringContainsString('امتیاز امروز', $text);
         $this->assertStringContainsString('GitHub: 900', $text);
-        $this->assertStringContainsString('ClickUp غیرکدی: 1,200', $text);
+        $this->assertStringContainsString('تسک تیم غیرکدی: 1,200', $text);
         $this->assertStringContainsString('جمع: 2,100', $text);
         $this->assertStringContainsString('طراحی بنر', $text);
         $this->assertStringContainsString('دلیل: کار خفن طراحی', $text);
     }
 
+    public function test_unknown_github_login_is_not_attributed_to_anyone(): void
+    {
+        $now = now('Asia/Tehran');
+
+        CommitScore::query()->create([
+            'sha' => str_repeat('b', 40),
+            'repo' => 'BytelabsTeam/MegaShop',
+            'login' => 'ghost-user',
+            'email' => null,
+            'name' => 'Ghost',
+            'message' => 'unknown commit',
+            'score' => 999,
+            'committed_at' => $now->copy()->utc(),
+            'month' => JalaliCalendar::monthKey($now),
+        ]);
+
+        $text = app(ScoreReportService::class)->formatDailyHighlight($now);
+
+        $this->assertStringNotContainsString('999', $text);
+    }
+
     public function test_it_formats_daily_highlight(): void
     {
         $now = now('Asia/Tehran');
-        $month = JalaliCalendar::monthKey($now);
 
-        TaskScore::query()->create([
-            'task_id' => 'best',
-            'email' => 'aref@example.com',
-            'username' => 'Aref',
-            'task_name' => 'ریسرچ بازار',
+        TeamTask::query()->create([
+            'title' => 'ریسرچ بازار',
+            'status' => 'done',
+            'priority' => 'normal',
+            'assignee_telegram_id' => 1,
+            'assignee_username' => 'aref_telegram',
+            'assignee_name' => 'عارف',
+            'created_by_telegram_id' => 1,
             'is_code' => false,
             'score' => 2500,
-            'reason' => 'تأثیر بالا',
+            'score_reason' => 'تأثیر بالا',
             'completed_at' => $now->copy()->utc(),
-            'month' => $month,
         ]);
 
         $text = app(ScoreReportService::class)->formatDailyHighlight($now);

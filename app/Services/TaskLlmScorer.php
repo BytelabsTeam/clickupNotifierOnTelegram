@@ -19,7 +19,7 @@ class TaskLlmScorer
             [
                 'role' => 'system',
                 'content' => implode("\n", [
-                    'You score a completed ClickUp task for a team leaderboard.',
+                    'You score a completed team task for a team leaderboard.',
                     'Return ONLY valid JSON: {"is_code": <bool>, "score": <int>, "reason": "<short Persian or English>"}',
                     'is_code=true when the task is software/coding work that is typically reflected in Git commits',
                     '(implement feature, fix bug in code, refactor, API, PR, deploy code, write scripts, etc.).',

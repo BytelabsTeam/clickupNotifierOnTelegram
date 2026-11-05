@@ -96,7 +96,7 @@ class TelegramNotifier
     /**
      * @param  list<list<array{text: string, callback_data: string}>>  $inlineKeyboard
      */
-    public function sendWithInlineKeyboard(string $text, array $inlineKeyboard): ?int
+    public function sendWithInlineKeyboard(string $text, array $inlineKeyboard, string|int|null $messageThreadId = null): ?int
     {
         [, $chatId] = $this->credentials();
 
@@ -106,7 +106,7 @@ class TelegramNotifier
             'reply_markup' => json_encode([
                 'inline_keyboard' => $inlineKeyboard,
             ], JSON_UNESCAPED_UNICODE),
-        ], config('telegram.message_thread_id')));
+        ], $messageThreadId ?? config('telegram.message_thread_id')));
 
         $id = $json['result']['message_id'] ?? null;
 
@@ -148,13 +148,20 @@ class TelegramNotifier
 
         $response->throw();
 
+        // Commands are only shown and accepted in private chats; the team group stays notification-only.
         Http::asForm()->post("https://api.telegram.org/bot{$token}/setMyCommands", [
+            'scope' => json_encode(['type' => 'all_private_chats'], JSON_UNESCAPED_UNICODE),
             'commands' => json_encode([
                 ['command' => 'tasks', 'description' => 'لیست تسک‌های باز'],
                 ['command' => 'today', 'description' => 'تسک‌های امروز'],
                 ['command' => 'tomorrow', 'description' => 'تسک‌های امروز، فردا و عقب‌افتاده'],
                 ['command' => 'overdue', 'description' => 'تسک‌های عقب‌افتاده'],
                 ['command' => 'me', 'description' => 'فقط تسک‌های خودت'],
+                ['command' => 'newtask', 'description' => 'ساخت تسک برای خودت'],
+                ['command' => 'status', 'description' => 'تغییر وضعیت تسک'],
+                ['command' => 'team', 'description' => 'همه تسک‌های تیم (ادمین)'],
+                ['command' => 'assign', 'description' => 'واگذاری تسک (ادمین)'],
+                ['command' => 'chart', 'description' => 'نمودار امتیاز ماه'],
                 ['command' => 'myscore', 'description' => 'امتیاز خودت با جزئیات'],
                 ['command' => 'highlight', 'description' => 'خفن‌ترین کار امروز'],
                 ['command' => 'topday', 'description' => 'برترین‌های امروز'],

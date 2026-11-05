@@ -10,10 +10,10 @@ class DailyHighlightCronController extends Controller
 {
     public function __invoke(Request $request, NotifyDailyHighlight $notifier): JsonResponse
     {
-        $token = config('clickup.cron_token');
+        $token = config('app.cron_token');
 
         if (! is_string($token) || $token === '') {
-            abort(500, 'CLICKUP_CRON_TOKEN is not configured.');
+            abort(500, 'CRON_TOKEN is not configured.');
         }
 
         if (! hash_equals($token, (string) $request->query('token', ''))) {

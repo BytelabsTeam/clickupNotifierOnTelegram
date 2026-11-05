@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\MorningCheckinMessage;
+use App\Models\TeamMember;
 use App\Models\WorkStart;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
@@ -13,7 +14,7 @@ class NotifyMorningCheckIn
     public const CALLBACK_DATA = 'work_start';
 
     public function __construct(
-        private readonly UserNameResolver $userNameResolver,
+        private readonly TeamIdentityService $identity,
         private readonly TelegramNotifier $telegramNotifier,
     ) {
     }
@@ -83,8 +84,17 @@ class NotifyMorningCheckIn
         }
 
         $username = ltrim(trim((string) ($from['username'] ?? '')), '@');
-        $email = $this->emailForTelegramUsername($username);
-        $displayName = $this->resolveDisplayName($from, $email, $username);
+        $member = TeamMember::query()->where('telegram_user_id', $telegramUserId)->first();
+
+        if ($member === null || ! $member->is_active) {
+            return [
+                'created' => false,
+                'work_start' => null,
+                'toast' => 'این حساب عضو فعال تیم نیست.',
+            ];
+        }
+
+        $displayName = $member->display_name;
 
         try {
             $workStart = WorkStart::query()->create([
@@ -92,7 +102,7 @@ class NotifyMorningCheckIn
                 'telegram_user_id' => $telegramUserId,
                 'telegram_username' => $username !== '' ? $username : null,
                 'display_name' => $displayName,
-                'email' => $email,
+                'email' => null,
                 'started_at' => $now,
             ]);
         } catch (QueryException) {
@@ -192,68 +202,15 @@ class NotifyMorningCheckIn
      */
     private function mentionUsernames(): array
     {
-        $usernames = [];
-
-        foreach (config('telegram.usernames', []) as $username) {
-            if (! is_string($username) || trim($username) === '') {
-                continue;
-            }
-
-            $clean = ltrim(trim($username), '@');
-
-            if ($clean === '') {
-                continue;
-            }
-
-            $usernames[mb_strtolower($clean)] = $clean;
-        }
-
-        return array_values($usernames);
-    }
-
-    /**
-     * @param  array{username?: string, first_name?: string, last_name?: string}  $from
-     */
-    private function resolveDisplayName(array $from, ?string $email, string $username): string
-    {
-        if ($email !== null) {
-            $mapped = $this->userNameResolver->resolve($email, $username !== '' ? $username : null);
-
-            if ($mapped !== '' && $mapped !== 'کاربر ناشناس') {
-                return $mapped;
-            }
-        }
-
-        $first = trim((string) ($from['first_name'] ?? ''));
-        $last = trim((string) ($from['last_name'] ?? ''));
-        $full = trim($first.' '.$last);
-
-        if ($full !== '') {
-            return $full;
-        }
-
-        if ($username !== '') {
-            return $username;
-        }
-
-        return 'کاربر';
-    }
-
-    private function emailForTelegramUsername(string $username): ?string
-    {
-        $needle = mb_strtolower(ltrim(trim($username), '@'));
-
-        if ($needle === '') {
-            return null;
-        }
-
-        foreach (config('telegram.usernames', []) as $email => $mapped) {
-            if (mb_strtolower(ltrim(trim((string) $mapped), '@')) === $needle) {
-                return (string) $email;
-            }
-        }
-
-        return null;
+        return TeamMember::query()
+            ->where('is_active', true)
+            ->whereNotNull('telegram_username')
+            ->pluck('telegram_username')
+            ->map(fn (string $username): string => ltrim(trim($username), '@'))
+            ->filter()
+            ->unique(fn (string $username): string => mb_strtolower($username))
+            ->values()
+            ->all();
     }
 
     private function formatClock(Carbon $time): string

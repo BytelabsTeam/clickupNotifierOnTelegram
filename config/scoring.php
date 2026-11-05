@@ -21,7 +21,7 @@ if (is_array($aliases)) {
 }
 
 return [
-    // Map alternate emails → canonical email so ClickUp + GitHub scores merge.
-    // Example: {"github-only@gmail.com":"clickup@gmail.com"}
+    // Map alternate emails → canonical email so GitHub and team-task scores merge.
+    // Example: {"github-only@gmail.com":"team@gmail.com"}
     'email_aliases' => $normalized,
 ];

@@ -1,328 +1,77 @@
-# اعلان Done تسک‌های ClickUp در تلگرام
+# ربات مدیر تسک تیم (Telegram + GitHub + LLM)
 
-این پروژه Laravel رویداد `taskStatusUpdated` از ClickUp را دریافت می‌کند و وقتی تسکی Done می‌شود، پیامی شبیه این در گروه تلگرام ارسال می‌کند:
+ربات تیم برای:
+- اعلان کامیت‌های GitHub همراه با امتیاز LLM در گروه تیم
+- مدیریت تسک‌های غیرکدی هر عضو از **پیوی ربات** با دکمه‌ها
+- امتیازدهی تسک‌ها و کامیت‌ها با LLM (IranRouter)
+- گزارش هفتگی خودکار، تاریخچه روزانه/هفتگی/ماهانه و نمودار امتیاز ماه شمسی
 
-> عارف تسک "رفع باگ لاگین" رو انجام داد ✅
+زمان و تقویم بر اساس **Asia/Tehran** (ماه شمسی، هفته شنبه تا جمعه) است.
 
-## پیش‌نیازها
+## نقش‌ها
 
-- PHP 8.2+
-- Composer
-- دامنه با HTTPS (برای وب‌هوک ClickUp)
-- توکن API از ClickUp
-- Bot تلگرام و `chat_id` گروه
+- **گروه تیم**: فقط اعلان می‌دهد (چک‌این صبحگاهی با دکمه «شروع کار»، کامیت‌ها با امتیاز، گزارش‌ها). دستور از گروه پذیرفته نمی‌شود.
+- **پیوی ربات**: مدیریت تسک، منو، تاریخچه، امتیاز و دستورهای ادمین.
+- **ادمین**: آرمین (`is_admin` در `team_members`).
 
-## نصب محلی
+## نصب
 
 ```bash
 composer install
 cp .env.example .env
 php artisan key:generate
-php artisan migrate
+php artisan migrate --force
+php artisan db:seed --class=TeamMemberSeeder --force
 ```
 
-مقادیر `.env` را پر کنید (توضیحات در `.env.example`).
+مقادیر `.env` را پر کنید (توضیحات در `.env.example`). حداقل:
+`TELEGRAM_BOT_TOKEN`، `TELEGRAM_CHAT_ID`، `TELEGRAM_WEBHOOK_SECRET`، `GITHUB_TOKEN`، `GITHUB_REPOS`، `IRANROUTER_API_KEY`، `CRON_TOKEN`، `APP_TIMEZONE=Asia/Tehran`.
 
-## تنظیم تلگرام
+## اعضا (team_members)
 
-1. از [@BotFather](https://t.me/BotFather) یک Bot بسازید و `TELEGRAM_BOT_TOKEN` را بگیرید.
-2. Bot را به گروه اضافه کنید و به آن دسترسی ارسال پیام بدهید.
-3. `chat_id` گروه را در `TELEGRAM_CHAT_ID` قرار دهید (معمولاً با `-100` شروع می‌شود).
-4. در BotFather گزینه **Group Privacy** را خاموش کنید (`/setprivacy` → Disable) تا ربات دستورهای داخل گروه را ببیند.
-5. یک مقدار تصادفی برای `TELEGRAM_WEBHOOK_SECRET` بگذارید (حروف، عدد، `_` و `-`).
+هویت هر عضو با **آیدی عددی تلگرام** مشخص می‌شود؛ یوزرنیم فقط برای نمایش و mention است.
+تعریف اعضا در `database/seeders/TeamMemberSeeder.php` است و با `db:seed` اجرا می‌شود (idempotent).
 
-## ربات تلگرام (دستورها)
+کامیت GitHub به عضو وصل می‌شود اگر `github_login` (بدون حساسیت به حروف) با نویسنده‌ی کامیت یکی باشد. کامیت نویسنده‌ی ناشناس به هیچ‌کس نسبت داده نمی‌شود.
 
-با وبهوک کار می‌کند؛ نیازی به polling نیست. بعد از پر کردن `.env`:
+## ربات تلگرام
+
+ثبت وبهوک (بعد از هر تغییر دستورها):
 
 ```bash
 php artisan telegram:register-webhook
 ```
 
-روی هاست اشتراکی (بدون SSH) همین URL را یک‌بار در مرورگر باز کنید:
+یا روی هاست اشتراکی: `https://DOMAIN/PATH/telegram/set-webhook?token=CRON_TOKEN`
 
-```
-https://yourdomain.com/clickup_notif_on_telegram/telegram/set-webhook?token=CLICKUP_CRON_TOKEN
-```
+وبهوک: `POST /api/webhooks/telegram` (امضای `X-Telegram-Bot-Api-Secret-Token` با `TELEGRAM_WEBHOOK_SECRET` بررسی می‌شود).
 
-آدرس وبهوک:
+### دستورهای پیوی
 
-```
-POST /api/webhooks/telegram
-```
+| دستور | کار |
+|---|---|
+| `/menu` یا `/mytasks` | تسک‌های باز من با دکمه‌های شروع / انجام |
+| `/newtask عنوان \| توضیح \| 2026-11-10` | ساخت تسک برای خودم |
+| `/tasks`، `/today`، `/overdue`، `/me` | لیست تسک‌ها |
+| `/status ID doing\|done\|todo` | تغییر وضعیت تسک خودم (done = امتیاز LLM) |
+| `/history`، `/history week`، `/history month` | تاریخچه کامیت، تسک و امتیاز |
+| `/myscore [week\|month]` | امتیاز خودم |
+| `/chart` | نمودار امتیاز ماه شمسی |
+| `/topday`، `/topweek`، `/topmonth`، `/highlight` | برترین‌ها |
 
-امضای هدر `X-Telegram-Bot-Api-Secret-Token` با `TELEGRAM_WEBHOOK_SECRET` بررسی می‌شود.
+ادمین: `/team` (همه‌ی تسک‌ها) و `/assign ID @username` (واگذاری).
 
-وبهوک باید `callback_query` را هم بپذیرد (برای دکمه «شروع کار»). بعد از آپدیت کد یک‌بار وبهوک را دوباره ثبت کنید.
+## زمان‌بندی (cron بیرونی)
 
-### صبح‌بخیر و ثبت شروع کار
+همه‌ی آدرس‌ها با `?token=CRON_TOKEN` فراخوانی می‌شوند.
 
-هر روز ساعت **۹ صبح** به وقت `Asia/Tehran` پیام «صبح بخیر» با تگ همه (`TELEGRAM_USERNAMES`) و دکمه **شروع کار** به گروه می‌رود. با زدن دکمه، ساعت شروع همان روز در دیتابیس ثبت می‌شود و همان پیام ویرایش می‌شود تا لیست شروع‌کرده‌ها دیده شود (پیام جدید فرستاده نمی‌شود).
-
-در cPanel یک Cron Job بسازید (ساعت ۹ صبح به وقت سرور / تهران):
-
-```
-0 9 * * *
-```
-
-آدرس فایل داخل پروژه (بدون روت لاراول):
-
-```
-https://yourdomain.com/clickup_notif_on_telegram/cron/morning-checkin.php?token=CLICKUP_CRON_TOKEN
-```
-
-یا با PHP CLI:
-
-```bash
-php /home/USER/public_html/clickup_notif_on_telegram/cron/morning-checkin.php
-```
-
-تست دستی:
-
-```bash
-php cron/morning-checkin.php
-# یا
-php artisan telegram:morning-checkin
-```
-
-در گروه تنظیم‌شده یا در چت خصوصی (اگر یوزرنیم‌تان در `TELEGRAM_USERNAMES` باشد) می‌توانید بزنید:
-
-| دستور | معادل فارسی | کار |
+| آدرس | زمان‌بندی پیشنهادی | کار |
 |---|---|---|
-| `/tasks` | لیست | تسک‌های باز |
-| `/today` | امروز | تسک‌های امروز |
-| `/tomorrow` | فردا | امروز، فردا و عقب‌افتاده |
-| `/overdue` | عقب افتاده | فقط عقب‌افتاده |
-| `/me` | تسک های من | فقط تسک‌های خودتان |
-| `/topday` | برترین روز | بیشترین امتیاز امروز |
-| `/topweek` | برترین هفته | بیشترین امتیاز این هفته |
-| `/topmonth` | برترین ماه | بیشترین امتیاز این ماه شمسی (به وقت ایران) |
-| `/myscore` | امتیاز من | جزئیات امتیاز خودت (امروز؛ با `week`/`month` هم می‌شود) |
-| `/highlight` | خفن امروز | خفن‌ترین کار ثبت‌شده امروز |
-| `/fixscore` | — | ادمین: `/fixscore TASK_ID 1500 دلیل` |
-| `/uncode` | — | ادمین: تسک را غیرکدی کن |
-| `/markcode` | — | ادمین: تسک را کدی علامت بزن (امتیاز ۰) |
-| `/help` | راهنما | لیست دستورها |
-
-ادمین‌ها را در `.env` با `TELEGRAM_ADMIN_USERNAMES` مشخص کنید (یوزرنیم تلگرام، با ویرگول).
-
-هایلایت روزانه (پیشنهاد: ۲۱:۰۰ تهران) با Cron URL:
-
-```
-https://yourdomain.com/clickup_notif_on_telegram/cron/daily-highlight?token=CLICKUP_CRON_TOKEN
-```
-
-یا:
-
-```bash
-php artisan telegram:daily-highlight
-```
-
-
-### گیت‌هاب + ClickUp (برترین‌ها)
-
-رتبه‌بندی مجموع دو منبع است:
-
-1. **کامیت GitHub** — LLM روی متن کامیت + خلاصه diff + داکیومنت مبنا (۰ تا ۳۰۰۰)
-2. **تسک Done غیرکدی ClickUp** — LLM تشخیص می‌دهد تسک کدی است یا نه؛ کدی‌ها امتیاز ۰ می‌گیرند (چون در Git حساب شده‌اند)، غیرکدی‌ها ۰ تا ۵۰۰۰
-
-فقط کارهای واقعاً خفن نزدیک سقف امتیاز می‌گیرند. کرون امتیاز فقط کامیت‌های **۶ ساعت اخیر** که هنوز در دیتابیس نیستند را می‌گیرد و ذخیره می‌کند (`GITHUB_SCORE_LOOKBACK_HOURS`). لیدربورد روی ماه/هفته/روز شمسی از همین دیتابیس جمع می‌زند.
-
-لیدربورد (`/topday` و …) فقط از دیتابیس می‌خواند و به GitHub درخواست نمی‌زند؛ امتیازدهی با کرون `github:score-commits` / `clickup:score-tasks` انجام می‌شود.
-
-برای جلوگیری از timeout و retry تلگرام، وبهوک بلافاصله `ok` برمی‌گرداند و محاسبه leaderboard بعد از پاسخ انجام می‌شود؛ `update_id` تکراری نادیده گرفته می‌شود.
-
-در `.env`:
-
-```env
-GITHUB_TOKEN=github_pat_...
-GITHUB_REPOS=org/app,https://github.com/org/api
-GITHUB_USER_LOGINS='{"arefmohammad332@gmail.com":"DeAref","mo.salehi1387p@gmail.com":"MRSYTp"}'
-
-CLICKUP_USER_NAMES='{"arefmohammad332@gmail.com":"عارف","hassan.ah1381@gmail.com":"حسن"}'
-# ایمیل فرعی → ایمیل اصلی تا امتیاز یک نفر دو تکه نشود
-SCORE_EMAIL_ALIASES='{"other-github@gmail.com":"hassan.ah1381@gmail.com"}'
-
-IRANROUTER_API_KEY=ir-...
-IRANROUTER_BASE_URL=https://www.iranrouter.net/api/v1
-IRANROUTER_MODEL=openai/gpt-6-luna
-```
-
-- توکن را از [Fine-grained personal access tokens](https://github.com/settings/personal-access-tokens/new) بسازید.
-  - Resource owner: سازمان `BytelabsTeam`
-  - Repository access: فقط ریپوهای لیست‌شده در `GITHUB_REPOS`
-  - Permissions → Repository: **Contents = Read-only**
-- `GITHUB_REPOS` را با ویرگول جدا کنید (`owner/repo` یا لینک کامل).
-- `GITHUB_USER_LOGINS` یوزرنیم گیت‌هاب را به ایمیل وصل می‌کند.
-- `SCORE_EMAIL_ALIASES` ایمیل‌های مختلف یک نفر را به ایمیل canonical (معمولاً همان ClickUp) نگاشت می‌کند.
-- کلید IranRouter را از داشبورد [iranrouter.net](https://www.iranrouter.net/) بگیرید.
-- داکیومنت مبنای هر ریپو یک‌بار با LLM ساخته و ذخیره می‌شود:
-
-```bash
-php artisan github:regenerate-scoring-doc owner/repo
-```
-
-همگام‌سازی امتیازها (بدون تلگرام):
-
-```bash
-php artisan github:score-commits
-php artisan clickup:score-tasks
-```
-
-Cron URLها (cPanel → Fetch URL؛ پیشنهاد: هر ۵–۱۵ دقیقه):
-
-```
-https://yourdomain.com/clickup_notif_on_telegram/cron/github-score-commits?token=CLICKUP_CRON_TOKEN
-https://yourdomain.com/clickup_notif_on_telegram/cron/clickup-score-tasks?token=CLICKUP_CRON_TOKEN
-```
-
-بعد از تغییر دستورها یک‌بار وبهوک را دوباره ست کنید تا منوی ربات به‌روز شود.
-
-## اعلان کامیت‌های GitHub
-
-هر کامیت جدید (غیر از merge) در گروه تلگرام اعلام می‌شود؛ متن کامیت با IranRouter (`gpt-6-luna`) به فارسی ترجمه می‌شود:
-
-```
-عارف توسعه داد:
-رفع باگ لاگین
-#MegaShop
-```
-
-نام فارسی از همان `CLICKUP_USER_NAMES` + `GITHUB_USER_LOGINS` گرفته می‌شود.
-
-### روی هاست اشتراکی (cPanel)
-
-یک Cron Job از نوع **Fetch a URL** (هر ۱ دقیقه):
-
-```
-https://yourdomain.com/clickup_notif_on_telegram/cron/github-commits?token=CLICKUP_CRON_TOKEN
-```
-
-همان `CLICKUP_CRON_TOKEN` که برای پولینگ ClickUp استفاده می‌کنید.
-
-### روی سرور/VPS
-
-```bash
-php artisan github:poll-commits
-# یا حلقه مداوم:
-php artisan github:poll-commits --loop --interval=60
-```
-
-تنظیمات اختیاری:
-
-```env
-GITHUB_COMMIT_POLL_LOOKBACK_MINUTES=15
-GITHUB_COMMIT_POLL_INTERVAL=60
-TELEGRAM_COMMIT_MESSAGE_TEMPLATE="{name} توسعه داد:\n{message}\n#{repo}"
-```
-
-اولین بار فقط بازهٔ `LOOKBACK` اخیر را می‌گیرد تا گروه با تاریخچه پر نشود.
-
-## تنظیم ClickUp
-
-1. از [ClickUp Settings > Apps](https://app.clickup.com/settings/apps) یک Personal API Token بسازید.
-2. `CLICKUP_API_TOKEN` و `CLICKUP_TEAM_ID` (Workspace ID) را در `.env` قرار دهید.
-
-## روش پیشنهادی: Polling (بدون webhook)
-
-به‌جای webhook، ClickUp را چک می‌کند و تسک‌های Done شده را در تلگرام اعلام می‌کند.
-
-### روی هاست اشتراکی (cPanel) — بدون دستور artisan
-
-روی هاست معمولی نمی‌توانی `--loop` اجرا کنی. یک URL امن می‌سازی که cPanel هر دقیقه آن را صدا بزند:
-
-**1.** در `.env` یک توکن تصادفی بگذار:
-
-```env
-CLICKUP_CRON_TOKEN=یک-رشته-تصادفی-طولانی
-```
-
-**2.** فایل‌ها را آپلود کن.
-
-**3.** در cPanel → **Cron Jobs** → نوع **Fetch a URL**:
-
-```
-https://yourdomain.com/clickup_notif_on_telegram/cron/clickup-poll?token=همان-توکن-بالا
-```
-
-زمان‌بندی: `* * * * *` (هر ۱ دقیقه — حداقل cPanel)
-
-**4.** تست: همان URL را در مرورگر باز کن. باید ببینی:
-
-```json
-{"status":"ok","notified":0,"checked_at":"..."}
-```
-
-### روی سرور/VPS (با SSH)
-
-```bash
-php artisan clickup:poll --loop --interval=10
-```
-
-تنظیمات اختیاری در `.env`:
-
-```env
-CLICKUP_POLL_INTERVAL=10
-CLICKUP_POLL_LOOKBACK_MINUTES=30
-CLICKUP_CRON_TOKEN=...
-```
-
-اولین بار ۳۰ دقیقه اخیر را اسکن می‌کند. بعد از آن فقط تسک‌های به‌روز شده را می‌گیرد.
-
-## روش قدیمی: Webhook (اختیاری)
-
-3. `CLICKUP_WEBHOOK_ENDPOINT` را روی آدرس عمومی برنامه تنظیم کنید:
-   `https://yourdomain.com/api/webhooks/clickup`
-4. وب‌هوک را ثبت کنید:
-
-```bash
-php artisan clickup:register-webhook
-```
-
-مقدار `CLICKUP_WEBHOOK_SECRET` که در خروجی چاپ می‌شود را در `.env` ذخیره کنید.
-
-## نگاشت نام فارسی کاربران
-
-در `.env` ایمیل هر کاربر را به نام فارسی نگاشت کنید:
-
-```env
-CLICKUP_USER_NAMES='{"arefmohaamd332@gmail.com":"عارف","ali@example.com":"علی"}'
-```
-
-اگر نام فارسی فاصله دارد (مثلاً «حمید تد»)، کل مقدار JSON را داخل **تک‌کوتیشن** بگذارید؛ در غیر این صورت Laravel هنگام خواندن `.env` خطای 500 می‌دهد:
-
-```env
-CLICKUP_USER_NAMES='{"hamid@example.com":"حمید تد"}'
-```
-
-اگر ایمیلی نگاشت نشده باشد، `username` خود ClickUp استفاده می‌شود.
-
-## استقرار روی cPanel
-
-1. فایل‌های پروژه را آپلود کنید (شامل `app/`، `bootstrap/`، `config/`). پوشه `bootstrap/cache/` را آپلود نکنید، یا بعد از آپلود فایل‌های `packages.php` و `services.php` داخل آن را حذف کنید؛ در غیر این صورت خطای `PailServiceProvider not found` می‌آید.
-2. Document Root را روی پوشه پروژه بگذارید — فایل `.htaccess` ریشه درخواست‌ها را به `public/` هدایت می‌کند؛ نیازی به `/public/` در URL نیست.
-3. `.env` را روی سرور پر کنید (ClickUp، Telegram، `CLICKUP_CRON_TOKEN`). `APP_URL` باید دقیقاً همان آدرس زیرپوشه باشد، مثلاً:
-
-```env
-APP_URL=https://xai.po2.top/clickup_notif_on_telegram
-```
-
-4. در cPanel یک Cron Job از نوع **Fetch URL** بسازید (هر ۱ دقیقه):
-
-```
-https://yourdomain.com/clickup_notif_on_telegram/cron/clickup-poll?token=CLICKUP_CRON_TOKEN
-```
-
-نیازی به `php artisan` روی هاست نیست.
-
-## endpoint وب‌هوک
-
-```
-POST /api/webhooks/clickup
-```
-
-- امضای `X-Signature` با `CLICKUP_WEBHOOK_SECRET` بررسی می‌شود.
-- فقط وقتی `after.type = closed` یا نام وضعیت در `CLICKUP_DONE_STATUSES` باشد، پیام ارسال می‌شود.
+| `/cron/morning-checkin` | `0 9 * * *` (تهران) | پیام صبح‌بخیر و دکمه شروع کار |
+| `/cron/github-commits` | هر ۱ دقیقه | بررسی کامیت‌های جدید GitHub |
+| `/cron/github-score-commits` | هر ۱۰ دقیقه | امتیازدهی کامیت‌ها و اعلان همراه امتیاز |
+| `/cron/weekly-report` | هر ۱۰ دقیقه | گزارش هفتگی (جمعه از ۱۸:۰۰ تهران، یک‌بار در هفته) |
+| `/cron/daily-highlight` | `0 21 * * *` (تهران) | خفن‌ترین کار روز |
 
 ## تست
 
@@ -330,8 +79,10 @@ POST /api/webhooks/clickup
 php artisan test
 ```
 
-## مستندات مرتبط
+## ساختار مهم کد
 
-- [ClickUp Webhooks](https://developer.clickup.com/docs/webhooks)
-- [Webhook Signature](https://developer.clickup.com/docs/webhooksignature)
-- [Task Webhook Payloads](https://developer.clickup.com/docs/webhooktaskpayloads)
+- `app/Services/TeamIdentityService.php`: منبع واحد هویت اعضا و ادمین
+- `app/Services/TeamTaskService.php`، `TaskMenuService.php`: تسک‌ها و دکمه‌ها
+- `app/Services/CommitScoreSyncService.php` + `NotifyScoredCommits.php`: امتیازدهی و اعلان کامیت
+- `app/Services/WeeklyReportService.php`، `HistoryService.php`، `ScoreChartService.php`: گزارش، تاریخچه، نمودار
+- `app/Services/TelegramBotHandler.php`: مسیریابی دستورها و دکمه‌ها (گروه/پیوی)

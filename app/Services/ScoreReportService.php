@@ -3,39 +3,34 @@
 namespace App\Services;
 
 use App\Models\CommitScore;
-use App\Models\TaskScore;
+use App\Models\TeamMember;
+use App\Models\TeamTask;
 use App\Support\JalaliCalendar;
 use Carbon\Carbon;
 
 class ScoreReportService
 {
-    public function __construct(
-        private readonly ScoreIdentityResolver $scoreIdentityResolver,
-        private readonly TelegramUsernameResolver $telegramUsernameResolver,
-        private readonly UserNameResolver $userNameResolver,
-    ) {
+    public function __construct(private readonly TeamIdentityService $identity)
+    {
     }
 
-    public function formatMyScore(string $telegramUsername, string $period = 'today'): string
+    public function formatMyScore(int $telegramUserId, string $period = 'today'): string
     {
-        $email = $this->telegramUsernameResolver->emailForUsername($telegramUsername);
+        $member = $this->identity->findByTelegramId($telegramUserId);
 
-        if ($email === null) {
-            return "یوزرنیم @{$telegramUsername} در TELEGRAM_USERNAMES نگاشت نشده.";
+        if ($member === null) {
+            return 'این حساب در لیست اعضای تیم ثبت نشده.';
         }
 
         [$from, $to, $title] = $this->periodBounds($period);
-        $identity = $this->scoreIdentityResolver->resolve(null, $email, null);
-        $display = $this->userNameResolver->resolve($email, $telegramUsername);
-
-        $items = $this->collectItems($from, $to);
+        $key = 'tg:'.$telegramUserId;
         $mine = array_values(array_filter(
-            $items,
-            fn (array $item): bool => $item['key'] === $identity['key']
+            $this->collectItems($from, $to),
+            fn (array $item): bool => $item['key'] === $key
         ));
 
         if ($mine === []) {
-            return "{$title} — {$display}:\nدر این بازه امتیازی برای تو ثبت نشده.";
+            return "{$title} — {$member->display_name}:\nدر این بازه امتیازی برای تو ثبت نشده.";
         }
 
         $commitTotal = 0;
@@ -52,10 +47,10 @@ class ScoreReportService
         usort($mine, static fn (array $a, array $b): int => $b['score'] <=> $a['score']);
 
         $lines = [
-            "{$title} — {$display}:",
+            "{$title} — {$member->display_name}:",
             '',
             '💻 GitHub: '.number_format($commitTotal),
-            '📋 ClickUp غیرکدی: '.number_format($taskTotal),
+            '📋 تسک تیم غیرکدی: '.number_format($taskTotal),
             '⭐ جمع: '.number_format($commitTotal + $taskTotal),
             '',
             'برترین کارها:',
@@ -77,10 +72,7 @@ class ScoreReportService
     {
         $timezone = JalaliCalendar::timezone();
         $day = ($day ?? Carbon::now($timezone))->copy()->timezone($timezone);
-        $from = $day->copy()->startOfDay();
-        $to = $day->copy()->endOfDay();
-
-        $items = $this->collectItems($from, $to);
+        $items = $this->collectItems($day->copy()->startOfDay(), $day->copy()->endOfDay());
 
         if ($items === []) {
             return 'خفن‌ترین کار امروز هنوز ثبت نشده.';
@@ -140,15 +132,7 @@ class ScoreReportService
     }
 
     /**
-     * @return list<array{
-     *   key: string,
-     *   person: string,
-     *   source: string,
-     *   score: int,
-     *   label: string,
-     *   short: string,
-     *   detail: string
-     * }>
+     * @return list<array{key: string, person: string, source: string, score: int, label: string, short: string, detail: string}>
      */
     private function collectItems(Carbon $from, Carbon $to): array
     {
@@ -164,17 +148,20 @@ class ScoreReportService
             ->get();
 
         foreach ($commits as $row) {
-            $identity = $this->scoreIdentityResolver->resolve($row->login, $row->email, $row->name);
+            $identity = $this->identity->resolveGithubLogin($row->login);
+
+            if ($identity === null) {
+                // Unknown GitHub login: never guess an owner; keep it out of personal scores.
+                continue;
+            }
+
             $subject = $this->commitSubject((string) ($row->message ?? ''));
             $repo = (string) $row->repo;
             $shortRepo = str_contains($repo, '/') ? substr($repo, strrpos($repo, '/') + 1) : $repo;
 
             $items[] = [
                 'key' => $identity['key'],
-                'person' => $this->telegramUsernameResolver->formatDisplayName(
-                    $this->userNameResolver->resolve($identity['email'], $identity['username']),
-                    $identity['email']
-                ),
+                'person' => $identity['display'],
                 'source' => 'commit',
                 'score' => (int) $row->score,
                 'label' => "💻 کامیت #{$shortRepo}: {$subject}",
@@ -183,8 +170,7 @@ class ScoreReportService
             ];
         }
 
-        $tasks = TaskScore::query()
-            ->where('month', $month)
+        $tasks = TeamTask::query()
             ->where('is_code', false)
             ->where('score', '>', 0)
             ->whereNotNull('completed_at')
@@ -193,16 +179,12 @@ class ScoreReportService
             ->get();
 
         foreach ($tasks as $row) {
-            $identity = $this->scoreIdentityResolver->resolve(null, $row->email, $row->username ?? $row->name);
-            $taskName = (string) $row->task_name;
-            $reason = trim((string) ($row->reason ?? ''));
+            $taskName = (string) $row->title;
+            $reason = trim((string) ($row->score_reason ?? ''));
 
             $items[] = [
-                'key' => $identity['key'],
-                'person' => $this->telegramUsernameResolver->formatDisplayName(
-                    $this->userNameResolver->resolve($identity['email'], $identity['username']),
-                    $identity['email']
-                ),
+                'key' => 'tg:'.$row->assignee_telegram_id,
+                'person' => (string) ($row->assignee_name ?: '@'.$row->assignee_username),
                 'source' => 'task',
                 'score' => (int) $row->score,
                 'label' => "📋 تسک: {$taskName}",

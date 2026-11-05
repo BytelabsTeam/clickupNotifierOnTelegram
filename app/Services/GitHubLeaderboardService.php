@@ -3,23 +3,19 @@
 namespace App\Services;
 
 use App\Models\CommitScore;
-use App\Models\TaskScore;
+use App\Models\TeamTask;
 use App\Support\JalaliCalendar;
 use Carbon\Carbon;
 
 class GitHubLeaderboardService
 {
-    public function __construct(
-        private readonly ScoreIdentityResolver $scoreIdentityResolver,
-        private readonly UserNameResolver $userNameResolver,
-        private readonly TelegramUsernameResolver $telegramUsernameResolver,
-        private readonly ClickUpClient $clickUpClient,
-    ) {
+    public function __construct(private readonly TeamIdentityService $identity)
+    {
     }
 
     public function formatTopToday(): string
     {
-        $timezone = $this->timezone();
+        $timezone = JalaliCalendar::timezone();
         $from = Carbon::now($timezone)->startOfDay();
         $to = Carbon::now($timezone)->endOfDay();
 
@@ -28,7 +24,7 @@ class GitHubLeaderboardService
 
     public function formatTopWeek(): string
     {
-        $timezone = $this->timezone();
+        $timezone = JalaliCalendar::timezone();
         $from = Carbon::now($timezone)->startOfWeek(Carbon::SATURDAY);
         $to = $from->copy()->addWeek()->subSecond();
 
@@ -44,51 +40,40 @@ class GitHubLeaderboardService
 
     private function format(Carbon $from, Carbon $to, string $title): string
     {
-        $hasGithub = $this->githubConfigured();
-        $hasClickUp = $this->clickUpClient->isConfigured();
-
-        if (! $hasGithub && ! $hasClickUp) {
-            return $title.":\nنه GitHub و نه ClickUp برای امتیازدهی تنظیم شده.";
-        }
-
-        // Leaderboard is DB-only. Scoring runs via cron (github:score-commits / clickup:score-tasks).
-        $month = JalaliCalendar::monthKey(Carbon::now($this->timezone()));
+        // Leaderboard is DB-only. Scoring runs via cron (github:score-commits).
+        $month = JalaliCalendar::monthKey(Carbon::now(JalaliCalendar::timezone()));
         $counts = [];
 
-        if ($hasGithub) {
-            $commitRows = CommitScore::query()
-                ->where('month', $month)
-                ->whereNotNull('committed_at')
-                ->where('committed_at', '>=', $from->copy()->utc())
-                ->where('committed_at', '<=', $to->copy()->utc())
-                ->get();
+        $commitRows = CommitScore::query()
+            ->where('month', $month)
+            ->whereNotNull('committed_at')
+            ->where('committed_at', '>=', $from->copy()->utc())
+            ->where('committed_at', '<=', $to->copy()->utc())
+            ->get();
 
-            foreach ($commitRows as $row) {
-                $this->addScore(
-                    $counts,
-                    $this->scoreIdentityResolver->resolve($row->login, $row->email, $row->name),
-                    (int) $row->score,
-                );
+        foreach ($commitRows as $row) {
+            $identity = $this->identity->resolveGithubLogin($row->login);
+
+            if ($identity === null) {
+                continue;
             }
+
+            $this->addScore($counts, $identity, (int) $row->score);
         }
 
-        if ($hasClickUp) {
-            $taskRows = TaskScore::query()
-                ->where('month', $month)
-                ->where('is_code', false)
-                ->where('score', '>', 0)
-                ->whereNotNull('completed_at')
-                ->where('completed_at', '>=', $from->copy()->utc())
-                ->where('completed_at', '<=', $to->copy()->utc())
-                ->get();
+        $taskRows = TeamTask::query()
+            ->where('is_code', false)
+            ->where('score', '>', 0)
+            ->whereNotNull('completed_at')
+            ->where('completed_at', '>=', $from->copy()->utc())
+            ->where('completed_at', '<=', $to->copy()->utc())
+            ->get();
 
-            foreach ($taskRows as $row) {
-                $this->addScore(
-                    $counts,
-                    $this->scoreIdentityResolver->resolve(null, $row->email, $row->username ?? $row->name),
-                    (int) $row->score,
-                );
-            }
+        foreach ($taskRows as $row) {
+            $this->addScore($counts, [
+                'key' => 'tg:'.$row->assignee_telegram_id,
+                'display' => (string) ($row->assignee_name ?: '@'.$row->assignee_username),
+            ], (int) $row->score);
         }
 
         if ($counts === []) {
@@ -120,7 +105,7 @@ class GitHubLeaderboardService
 
     /**
      * @param  array<string, array{display: string, lines: int}>  $counts
-     * @param  array{key: string, email: ?string, username: ?string}  $identity
+     * @param  array{key: string, display: string}  $identity
      */
     private function addScore(array &$counts, array $identity, int $score): void
     {
@@ -128,29 +113,8 @@ class GitHubLeaderboardService
             return;
         }
 
-        $counts[$identity['key']] ??= [
-            'display' => $this->telegramUsernameResolver->formatDisplayName(
-                $this->userNameResolver->resolve($identity['email'], $identity['username']),
-                $identity['email']
-            ),
-            'lines' => 0,
-        ];
+        $counts[$identity['key']] ??= ['display' => $identity['display'], 'lines' => 0];
         $counts[$identity['key']]['lines'] += $score;
-    }
-
-    private function githubConfigured(): bool
-    {
-        $token = config('github.token');
-
-        if (! is_string($token) || $token === '') {
-            return false;
-        }
-
-        $org = config('github.org');
-        $repos = config('github.repos', []);
-
-        return (is_string($org) && trim($org) !== '')
-            || (is_array($repos) && $repos !== []);
     }
 
     private function scoringRulesFooter(): string
@@ -160,14 +124,9 @@ class GitHubLeaderboardService
             '',
             'معیار امتیاز دهی:',
             '🤖 کامیت GitHub با LLM (۰ تا ۳۰۰۰)',
-            '📋 تسک Done غیرکدی ClickUp با LLM (۰ تا ۵۰۰۰) — تسک‌های کدی صفر می‌مانند چون در Git امتیاز گرفته‌اند',
+            '📋 تسک‌های تیم با LLM (۰ تا ۵۰۰۰) — تسک‌های کدی صفر می‌مانند چون در Git امتیاز گرفته‌اند',
             '⭐ فقط کارهای واقعاً خفن نزدیک سقف امتیاز می‌گیرند',
             '📅 فقط همین ماه شمسی (به وقت ایران) محاسبه و ذخیره می‌شود',
         ]);
-    }
-
-    private function timezone(): string
-    {
-        return JalaliCalendar::timezone();
     }
 }

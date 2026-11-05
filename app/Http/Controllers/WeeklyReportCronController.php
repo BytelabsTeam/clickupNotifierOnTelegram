@@ -2,18 +2,18 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\TaskScoreSyncService;
+use App\Services\WeeklyReportService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
-class ClickUpScoreCronController extends Controller
+class WeeklyReportCronController extends Controller
 {
-    public function __invoke(Request $request, TaskScoreSyncService $sync): JsonResponse
+    public function __invoke(Request $request, WeeklyReportService $report): JsonResponse
     {
-        $token = config('clickup.cron_token');
+        $token = config('app.cron_token');
 
         if (! is_string($token) || $token === '') {
-            abort(500, 'CLICKUP_CRON_TOKEN is not configured.');
+            abort(500, 'CRON_TOKEN is not configured.');
         }
 
         if (! hash_equals($token, (string) $request->query('token', ''))) {
@@ -21,7 +21,7 @@ class ClickUpScoreCronController extends Controller
         }
 
         try {
-            $result = $sync->syncCurrentMonth();
+            $result = $report->sendIfDue();
         } catch (\Throwable $exception) {
             report($exception);
 
@@ -33,9 +33,8 @@ class ClickUpScoreCronController extends Controller
 
         return response()->json([
             'status' => 'ok',
-            'scored' => $result['scored'],
-            'skipped_code' => $result['skipped_code'],
-            'skipped' => $result['skipped'],
+            'sent' => $result['sent'],
+            'period' => $result['period'],
             'checked_at' => now()->toIso8601String(),
         ]);
     }

@@ -3,17 +3,18 @@
 namespace App\Http\Controllers;
 
 use App\Services\CommitScoreSyncService;
+use App\Services\NotifyScoredCommits;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class GitHubScoreCronController extends Controller
 {
-    public function __invoke(Request $request, CommitScoreSyncService $sync): JsonResponse
+    public function __invoke(Request $request, CommitScoreSyncService $sync, NotifyScoredCommits $notifier): JsonResponse
     {
-        $token = config('clickup.cron_token');
+        $token = config('app.cron_token');
 
         if (! is_string($token) || $token === '') {
-            abort(500, 'CLICKUP_CRON_TOKEN is not configured.');
+            abort(500, 'CRON_TOKEN is not configured.');
         }
 
         if (! hash_equals($token, (string) $request->query('token', ''))) {
@@ -22,6 +23,7 @@ class GitHubScoreCronController extends Controller
 
         try {
             $result = $sync->syncCurrentMonth();
+            $notified = $notifier->notify();
         } catch (\Throwable $exception) {
             report($exception);
 
@@ -34,6 +36,7 @@ class GitHubScoreCronController extends Controller
         return response()->json([
             'status' => 'ok',
             'scored' => $result['scored'],
+            'notified' => $notified,
             'skipped' => $result['skipped'],
             'checked_at' => now()->toIso8601String(),
         ]);

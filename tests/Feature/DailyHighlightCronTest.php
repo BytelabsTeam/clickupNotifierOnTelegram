@@ -11,7 +11,7 @@ class DailyHighlightCronTest extends TestCase
     {
         parent::setUp();
 
-        config(['clickup.cron_token' => 'secret-cron-token']);
+        config(['app.cron_token' => 'secret-cron-token']);
     }
 
     public function test_cron_endpoint_runs_with_valid_token(): void

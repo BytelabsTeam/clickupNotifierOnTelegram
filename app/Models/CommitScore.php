@@ -14,7 +14,9 @@ class CommitScore extends Model
         'name',
         'message',
         'score',
+        'reason',
         'committed_at',
+        'notified_at',
         'month',
     ];
 
@@ -26,6 +28,7 @@ class CommitScore extends Model
         return [
             'score' => 'integer',
             'committed_at' => 'datetime',
+            'notified_at' => 'datetime',
         ];
     }
 }

@@ -65,6 +65,8 @@ return [
     |
     */
 
+    'cron_token' => env('CRON_TOKEN'),
+
     'timezone' => env('APP_TIMEZONE', 'Asia/Tehran'),
 
     /*
