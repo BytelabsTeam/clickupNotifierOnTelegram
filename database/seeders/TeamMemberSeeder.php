@@ -16,7 +16,8 @@ class TeamMemberSeeder extends Seeder
             [
                 'telegram_user_id' => 5550717851,
                 'telegram_username' => 'armin_ghaderi',
-                'github_login' => null,
+                // Verified: GitHub account id 101901876 (noreply email on his commits).
+                'github_login' => 'mainArminGhaderi',
                 'display_name' => 'آرمین',
                 'is_admin' => true,
             ],

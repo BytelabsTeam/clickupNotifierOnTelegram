@@ -38,6 +38,7 @@ class TeamMemberSeederTest extends TestCase
 
         $identity = app(TeamIdentityService::class);
 
+        $this->assertSame('tg:5550717851', $identity->resolveGithubLogin('mainarminghaderi')['key']);
         $this->assertSame('tg:1080648232', $identity->resolveGithubLogin('dearef')['key']);
         $this->assertSame('tg:103063134', $identity->resolveGithubLogin('mahdinasiri13861386')['key']);
         $this->assertSame('tg:353166574', $identity->resolveGithubLogin('hamidtad')['key']);
