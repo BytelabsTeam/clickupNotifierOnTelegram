@@ -17,7 +17,7 @@ class IranRouterClientTest extends TestCase
         ]);
 
         Http::fake([
-            'www.iranrouter.net/api/v1/chat/completions' => Http::response([
+            'iranrouter.net/api/v1/chat/completions' => Http::response([
                 'choices' => [
                     ['message' => ['content' => '{"score": 10, "reason": "ok"}']],
                 ],
@@ -31,7 +31,9 @@ class IranRouterClientTest extends TestCase
         $this->assertSame('{"score": 10, "reason": "ok"}', $content);
 
         Http::assertSent(function ($request) {
-            return $request->url() === 'https://www.iranrouter.net/api/v1/chat/completions'
+            return $request->url() === 'https://iranrouter.net/api/v1/chat/completions'
+                && $request->method() === 'POST'
+                && $request->hasHeader('Content-Type', 'application/json')
                 && $request['model'] === 'openai/gpt-6-luna'
                 && ! array_key_exists('temperature', $request->data())
                 && ($request->header('Authorization')[0] ?? '') === 'Bearer ir-test-key';

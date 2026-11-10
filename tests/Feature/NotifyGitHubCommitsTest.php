@@ -31,7 +31,7 @@ class NotifyGitHubCommitsTest extends TestCase
             'telegram.commit_message_template' => "{name} توسعه داد:\n{message}\n#{repo}",
             'clickup.cron_token' => 'secret-cron-token',
             'iranrouter.api_key' => 'ir-test-key',
-            'iranrouter.base_url' => 'https://www.iranrouter.net/api/v1',
+            'iranrouter.base_url' => 'https://iranrouter.net/api/v1',
             'iranrouter.model' => 'openai/gpt-6-luna',
             'iranrouter.timeout' => 30,
         ]);
@@ -68,7 +68,7 @@ class NotifyGitHubCommitsTest extends TestCase
                     ],
                 ],
             ], 200),
-            'www.iranrouter.net/api/v1/chat/completions' => Http::response([
+            'iranrouter.net/api/v1/chat/completions' => Http::response([
                 'choices' => [
                     ['message' => ['content' => 'رفع باگ لاگین']],
                 ],

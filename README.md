@@ -124,7 +124,7 @@ CLICKUP_USER_NAMES='{"arefmohammad332@gmail.com":"عارف","hassan.ah1381@gmail
 SCORE_EMAIL_ALIASES='{"other-github@gmail.com":"hassan.ah1381@gmail.com"}'
 
 IRANROUTER_API_KEY=ir-...
-IRANROUTER_BASE_URL=https://www.iranrouter.net/api/v1
+IRANROUTER_BASE_URL=https://iranrouter.net/api/v1
 IRANROUTER_MODEL=openai/gpt-6-luna
 ```
 

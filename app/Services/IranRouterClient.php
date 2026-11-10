@@ -13,7 +13,7 @@ class IranRouterClient
     public function chat(array $messages, ?int $maxTokens = 1024): string
     {
         $apiKey = $this->requireApiKey();
-        $baseUrl = (string) config('iranrouter.base_url');
+        $baseUrl = $this->normalizedBaseUrl();
         $model = (string) config('iranrouter.model', 'openai/gpt-6-luna');
         $timeout = max(5, (int) config('iranrouter.timeout', 60));
 
@@ -28,6 +28,16 @@ class IranRouterClient
 
         $response = Http::withToken($apiKey)
             ->acceptJson()
+            ->asJson()
+            ->withOptions([
+                // 301/302 from www → apex otherwise downgrades POST to GET (IranRouter 405).
+                'allow_redirects' => [
+                    'max' => 5,
+                    'strict' => true,
+                    'referer' => true,
+                    'protocols' => ['https'],
+                ],
+            ])
             ->timeout($timeout)
             ->connectTimeout(10)
             ->post("{$baseUrl}/chat/completions", $payload);
@@ -56,5 +66,13 @@ class IranRouterClient
         }
 
         return $key;
+    }
+
+    private function normalizedBaseUrl(): string
+    {
+        $baseUrl = rtrim((string) config('iranrouter.base_url'), '/');
+
+        // www host 301s to apex; without strict redirects POST becomes GET → 405.
+        return str_replace('://www.iranrouter.net', '://iranrouter.net', $baseUrl);
     }
 }

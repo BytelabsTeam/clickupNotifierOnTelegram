@@ -47,7 +47,7 @@ class TelegramWebhookTest extends TestCase
                 'ali@example.com' => 'alidev',
             ],
             'iranrouter.api_key' => 'ir-test-key',
-            'iranrouter.base_url' => 'https://www.iranrouter.net/api/v1',
+            'iranrouter.base_url' => 'https://iranrouter.net/api/v1',
             'iranrouter.model' => 'openai/gpt-6-luna',
         ]);
     }
