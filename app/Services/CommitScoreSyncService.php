@@ -174,6 +174,17 @@ class CommitScoreSyncService
                     ]
                 );
 
+                if ((int) $scoredResult['score'] > 0) {
+                    try {
+                        app(StreakCompetitionService::class)->maybeAnnounceOvertake(
+                            isset($commit['email']) ? (string) $commit['email'] : null,
+                            isset($commit['name']) ? (string) $commit['name'] : null,
+                        );
+                    } catch (Throwable $exception) {
+                        report($exception);
+                    }
+                }
+
                 $existingKeys[$key] = true;
                 $scored++;
             } catch (Throwable $exception) {

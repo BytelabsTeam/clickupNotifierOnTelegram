@@ -194,7 +194,7 @@ class TaskScoreSyncService
             ? $this->scoreIdentityResolver->canonicalizeEmail($email)
             : null;
 
-        return TaskScore::query()->updateOrCreate(
+        $score = TaskScore::query()->updateOrCreate(
             ['task_id' => $taskId],
             [
                 'email' => $canonicalEmail,
@@ -209,6 +209,16 @@ class TaskScoreSyncService
                 'month' => $month,
             ]
         );
+
+        if (! $result['is_code'] && (int) $result['score'] > 0) {
+            try {
+                app(StreakCompetitionService::class)->maybeAnnounceOvertake($canonicalEmail, $username);
+            } catch (Throwable $exception) {
+                report($exception);
+            }
+        }
+
+        return $score;
     }
 
     /**

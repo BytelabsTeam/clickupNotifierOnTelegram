@@ -13,6 +13,7 @@ class NotifyNewlyAssignedTasks
     private const NOTIFIED_CACHE_TTL_DAYS = 30;
 
     public function __construct(
+        private readonly AssignActionService $assignActionService,
         private readonly ClickUpClient $clickUpClient,
         private readonly TaskDoneDetector $taskDoneDetector,
         private readonly UserNameResolver $userNameResolver,
@@ -68,7 +69,14 @@ class NotifyNewlyAssignedTasks
 
                 $details ??= $this->buildTaskDetails($task);
                 $message = $this->formatMessage($assignee, $details);
-                $this->telegramNotifier->send($message, $details['media']);
+                $keyboard = $this->assignActionService->keyboardForTask($taskId);
+
+                $this->telegramNotifier->sendWithInlineKeyboard($message, $keyboard);
+
+                if ($details['media'] !== []) {
+                    $this->telegramNotifier->send('پیوست تسک:', $details['media']);
+                }
+
                 $notified++;
             }
         }
@@ -163,10 +171,13 @@ class NotifyNewlyAssignedTasks
         $mention = $this->telegramUsernameResolver->formatMention($displayName, $email);
 
         return implode("\n", [
+            '🆕 تسک جدید برای تو',
             $details['name'],
             $mention,
             '',
             '📝'.$details['creator'],
+            '',
+            'با دکمه‌ها سریع قبول/شروع/وضعیت/ددلاین بزن.',
         ]);
     }
 }

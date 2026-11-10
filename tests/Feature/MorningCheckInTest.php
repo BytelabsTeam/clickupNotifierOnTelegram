@@ -147,8 +147,20 @@ class MorningCheckInTest extends TestCase
                 && ($markup['inline_keyboard'][0][0]['callback_data'] ?? null) === 'work_start';
         });
 
-        Http::assertNotSent(function ($request) {
-            return str_contains($request->url(), 'sendMessage');
+        Http::assertSent(function ($request) {
+            if (! str_contains($request->url(), 'sendMessage')) {
+                return false;
+            }
+
+            $text = (string) $request['text'];
+            $markup = json_decode((string) ($request['reply_markup'] ?? ''), true);
+            $buttons = collect($markup['inline_keyboard'] ?? [])->flatten(1);
+
+            return (string) $request['chat_id'] === '222'
+                && str_contains($text, 'صبح بخیر علی')
+                && str_contains($text, 'استریک:')
+                && str_contains($text, 'امتیاز دیروز:')
+                && $buttons->contains(fn (array $btn): bool => ($btn['callback_data'] ?? '') === 'tm:home');
         });
     }
 

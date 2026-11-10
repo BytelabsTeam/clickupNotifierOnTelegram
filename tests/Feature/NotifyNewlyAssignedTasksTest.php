@@ -99,13 +99,20 @@ class NotifyNewlyAssignedTasksTest extends TestCase
         $this->assertSame(1, $result['notified']);
 
         Http::assertSent(function ($request) {
-            return str_contains($request->url(), 'sendMessage')
-                && $request['text'] === implode("\n", [
-                    'اضافه کردن قابلیت API و ارسال پیام همگانی',
-                    '@MegaGeek',
-                    '',
-                    '📝حسن',
-                ]);
+            if (! str_contains($request->url(), 'sendMessage')) {
+                return false;
+            }
+
+            $text = (string) $request['text'];
+            $markup = json_decode((string) ($request['reply_markup'] ?? ''), true);
+            $buttons = collect($markup['inline_keyboard'] ?? [])->flatten(1);
+
+            return str_contains($text, '🆕 تسک جدید برای تو')
+                && str_contains($text, 'اضافه کردن قابلیت API و ارسال پیام همگانی')
+                && str_contains($text, '@MegaGeek')
+                && str_contains($text, '📝حسن')
+                && $buttons->contains(fn (array $btn): bool => str_starts_with((string) ($btn['callback_data'] ?? ''), 'as:ok:'))
+                && $buttons->contains(fn (array $btn): bool => str_starts_with((string) ($btn['callback_data'] ?? ''), 'as:go:'));
         });
     }
 

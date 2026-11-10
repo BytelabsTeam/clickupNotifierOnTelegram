@@ -26,6 +26,257 @@ class ClickUpClient
         return is_array($task) ? $task : [];
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    public function getList(string $listId): array
+    {
+        $token = $this->requireApiToken();
+
+        $response = Http::withHeaders(['Authorization' => $token])
+            ->acceptJson()
+            ->get("https://api.clickup.com/api/v2/list/{$listId}");
+
+        $response->throw();
+
+        $list = $response->json();
+
+        return is_array($list) ? $list : [];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function getListStatuses(string $listId): array
+    {
+        $list = $this->getList($listId);
+        $statuses = $list['statuses'] ?? [];
+
+        if (! is_array($statuses)) {
+            return [];
+        }
+
+        $result = [];
+
+        foreach ($statuses as $status) {
+            if (is_array($status)) {
+                $result[] = $status;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    public function createTask(string $listId, array $payload): array
+    {
+        $token = $this->requireApiToken();
+
+        $response = Http::withHeaders(['Authorization' => $token])
+            ->acceptJson()
+            ->asJson()
+            ->post("https://api.clickup.com/api/v2/list/{$listId}/task", $payload);
+
+        try {
+            $response->throw();
+        } catch (RequestException $exception) {
+            throw new \RuntimeException(
+                'Failed to create ClickUp task: '.$exception->response?->body(),
+                previous: $exception
+            );
+        }
+
+        $task = $response->json();
+
+        return is_array($task) ? $task : [];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    public function updateTask(string $taskId, array $payload): array
+    {
+        $token = $this->requireApiToken();
+
+        $response = Http::withHeaders(['Authorization' => $token])
+            ->acceptJson()
+            ->asJson()
+            ->put("https://api.clickup.com/api/v2/task/{$taskId}", $payload);
+
+        try {
+            $response->throw();
+        } catch (RequestException $exception) {
+            throw new \RuntimeException(
+                'Failed to update ClickUp task: '.$exception->response?->body(),
+                previous: $exception
+            );
+        }
+
+        $task = $response->json();
+
+        return is_array($task) ? $task : [];
+    }
+
+    public function updateTaskStatus(string $taskId, string $status): array
+    {
+        return $this->updateTask($taskId, ['status' => $status]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function addTaskComment(string $taskId, string $commentText): array
+    {
+        $token = $this->requireApiToken();
+
+        $response = Http::withHeaders(['Authorization' => $token])
+            ->acceptJson()
+            ->asJson()
+            ->post("https://api.clickup.com/api/v2/task/{$taskId}/comment", [
+                'comment_text' => $commentText,
+            ]);
+
+        try {
+            $response->throw();
+        } catch (RequestException $exception) {
+            throw new \RuntimeException(
+                'Failed to comment on ClickUp task: '.$exception->response?->body(),
+                previous: $exception
+            );
+        }
+
+        $json = $response->json();
+
+        return is_array($json) ? $json : [];
+    }
+
+    public function resolveReviewStatus(string $listId): string
+    {
+        $preferred = trim((string) config('clickup.review_status', 'review'));
+        $statuses = $this->getListStatuses($listId);
+        $names = [];
+
+        foreach ($statuses as $status) {
+            $name = trim((string) ($status['status'] ?? ''));
+
+            if ($name !== '') {
+                $names[] = $name;
+            }
+        }
+
+        foreach ($names as $name) {
+            if (mb_strtolower($name) === mb_strtolower($preferred)) {
+                return $name;
+            }
+        }
+
+        foreach ($statuses as $status) {
+            $type = mb_strtolower((string) ($status['type'] ?? ''));
+            $name = trim((string) ($status['status'] ?? ''));
+
+            if ($name !== '' && ! in_array($type, ['closed', 'done'], true)) {
+                return $name;
+            }
+        }
+
+        return $preferred !== '' ? $preferred : 'to do';
+    }
+
+    public function resolveInProgressStatus(string $listId): string
+    {
+        $statuses = $this->getListStatuses($listId);
+
+        foreach ($statuses as $status) {
+            $name = trim((string) ($status['status'] ?? ''));
+            $type = mb_strtolower((string) ($status['type'] ?? ''));
+
+            if ($name !== '' && (str_contains(mb_strtolower($name), 'progress') || $type === 'custom')) {
+                return $name;
+            }
+        }
+
+        foreach ($statuses as $status) {
+            $type = mb_strtolower((string) ($status['type'] ?? ''));
+            $name = trim((string) ($status['status'] ?? ''));
+
+            if ($name !== '' && ! in_array($type, ['closed', 'done'], true)) {
+                return $name;
+            }
+        }
+
+        return 'in progress';
+    }
+
+    public function defaultListId(): string
+    {
+        $listId = config('clickup.list_id');
+
+        if (! is_string($listId) || $listId === '') {
+            throw new \RuntimeException('CLICKUP_LIST_ID برای ایجاد تسک تنظیم نشده.');
+        }
+
+        return $listId;
+    }
+
+    /**
+     * @return list<array{id: int, email: string, username: string}>
+     */
+    public function getTeamMembers(): array
+    {
+        $token = $this->requireApiToken();
+        $teamId = $this->requireTeamId();
+
+        return Cache::remember(
+            "clickup:team:{$teamId}:members",
+            now()->addHours(6),
+            function () use ($token, $teamId): array {
+                $response = Http::withHeaders(['Authorization' => $token])
+                    ->acceptJson()
+                    ->get('https://api.clickup.com/api/v2/team');
+
+                $response->throw();
+
+                $teams = $response->json('teams') ?? [];
+
+                if (! is_array($teams)) {
+                    return [];
+                }
+
+                $members = [];
+
+                foreach ($teams as $team) {
+                    if (! is_array($team) || (string) ($team['id'] ?? '') !== $teamId) {
+                        continue;
+                    }
+
+                    foreach ($team['members'] ?? [] as $member) {
+                        if (! is_array($member)) {
+                            continue;
+                        }
+
+                        $user = $member['user'] ?? $member;
+
+                        if (! is_array($user) || ! is_numeric($user['id'] ?? null)) {
+                            continue;
+                        }
+
+                        $members[] = [
+                            'id' => (int) $user['id'],
+                            'email' => (string) ($user['email'] ?? ''),
+                            'username' => (string) ($user['username'] ?? ''),
+                        ];
+                    }
+                }
+
+                return $members;
+            }
+        );
+    }
+
     public function getTaskName(string $taskId): string
     {
         $task = $this->getTask($taskId);

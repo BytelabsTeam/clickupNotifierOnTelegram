@@ -79,6 +79,7 @@ class TelegramWebhookTest extends TestCase
         Http::assertSent(function ($request) {
             return $request->url() === 'https://api.telegram.org/bot123456:telegram-token/sendMessage'
                 && $request['chat_id'] === self::GROUP_CHAT_ID
+                && str_contains((string) $request['text'], '/menu — منوی تسک‌ها')
                 && str_contains((string) $request['text'], '/tasks — لیست تسک‌های باز')
                 && ! isset($request['message_thread_id']);
         });

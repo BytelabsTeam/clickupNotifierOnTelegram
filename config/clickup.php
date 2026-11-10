@@ -15,6 +15,8 @@ return [
     'space_id' => env('CLICKUP_SPACE_ID'),
     'folder_id' => env('CLICKUP_FOLDER_ID'),
     'list_id' => env('CLICKUP_LIST_ID'),
+    'review_status' => env('CLICKUP_REVIEW_STATUS', 'review'),
+    'quality_min_desc' => (int) env('CLICKUP_QUALITY_MIN_DESC', 20),
     'poll_interval_seconds' => (int) env('CLICKUP_POLL_INTERVAL', 10),
     'poll_lookback_minutes' => (int) env('CLICKUP_POLL_LOOKBACK_MINUTES', 30),
     'cron_token' => env('CLICKUP_CRON_TOKEN'),

@@ -74,7 +74,14 @@ class ClickUpWebhookTest extends TestCase
     public function test_it_sends_telegram_message_when_task_is_marked_done(): void
     {
         Http::fake([
-            'api.clickup.com/api/v2/task/abc123' => Http::response(['name' => 'رفع باگ لاگین'], 200),
+            'api.clickup.com/api/v2/task/abc123' => Http::response([
+                'id' => 'abc123',
+                'name' => 'رفع باگ لاگین',
+                'description' => 'توضیح کامل تسک به همراه PR https://github.com/org/repo/pull/12',
+                'status' => ['status' => 'complete', 'type' => 'closed'],
+                'list' => ['id' => '1'],
+                'attachments' => [],
+            ], 200),
             'api.telegram.org/*' => Http::response(['ok' => true], 200),
         ]);
 
@@ -91,7 +98,14 @@ class ClickUpWebhookTest extends TestCase
     public function test_it_does_not_send_duplicate_notifications(): void
     {
         Http::fake([
-            'api.clickup.com/api/v2/task/abc123' => Http::response(['name' => 'رفع باگ لاگین'], 200),
+            'api.clickup.com/api/v2/task/abc123' => Http::response([
+                'id' => 'abc123',
+                'name' => 'رفع باگ لاگین',
+                'description' => 'توضیح کامل تسک به همراه PR https://github.com/org/repo/pull/12',
+                'status' => ['status' => 'complete', 'type' => 'closed'],
+                'list' => ['id' => '1'],
+                'attachments' => [],
+            ], 200),
             'api.telegram.org/*' => Http::response(['ok' => true], 200),
         ]);
 
@@ -100,7 +114,11 @@ class ClickUpWebhookTest extends TestCase
         $this->postSignedWebhook($payload)->assertOk();
         $this->postSignedWebhook($payload)->assertOk();
 
-        Http::assertSentCount(2);
+        $telegramSends = collect(Http::recorded())
+            ->filter(fn (array $pair): bool => str_contains($pair[0]->url(), 'api.telegram.org'))
+            ->count();
+
+        $this->assertSame(1, $telegramSends);
     }
 
     private function postSignedWebhook(array $payload)

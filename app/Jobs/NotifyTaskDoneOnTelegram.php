@@ -3,9 +3,7 @@
 namespace App\Jobs;
 
 use App\Services\ClickUpClient;
-use App\Services\TaskScoreSyncService;
-use App\Services\TelegramNotifier;
-use App\Services\UserNameResolver;
+use App\Services\TaskQualityGateService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
@@ -24,9 +22,7 @@ class NotifyTaskDoneOnTelegram implements ShouldQueue
 
     public function handle(
         ClickUpClient $clickUpClient,
-        UserNameResolver $userNameResolver,
-        TelegramNotifier $telegramNotifier,
-        TaskScoreSyncService $taskScoreSyncService,
+        TaskQualityGateService $taskQualityGateService,
     ): void {
         $cacheKey = 'clickup_webhook:'.$this->idempotencyKey;
 
@@ -34,19 +30,7 @@ class NotifyTaskDoneOnTelegram implements ShouldQueue
             return;
         }
 
-        $displayName = $userNameResolver->resolve($this->email, $this->username);
         $task = $clickUpClient->getTask($this->taskId);
-        $taskName = (string) ($task['name'] ?? $this->taskId);
-        $projectTag = $clickUpClient->resolveProjectTag($task);
-        $message = $telegramNotifier->formatMessage($displayName, $taskName, $projectTag);
-        $media = $clickUpClient->extractMediaAttachments($task['attachments'] ?? []);
-
-        $telegramNotifier->send($message, $media);
-
-        try {
-            $taskScoreSyncService->scoreTaskIfNeeded($task, $this->email, $this->username);
-        } catch (\Throwable $exception) {
-            report($exception);
-        }
+        $taskQualityGateService->notifyOrGate($task, $this->email, $this->username);
     }
 }

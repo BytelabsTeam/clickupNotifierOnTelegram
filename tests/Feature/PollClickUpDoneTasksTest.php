@@ -19,6 +19,7 @@ class PollClickUpDoneTasksTest extends TestCase
             'clickup.api_token' => 'pk_test_token',
             'clickup.team_id' => '90121842245',
             'clickup.done_statuses' => ['complete', 'done', 'تکمیل'],
+            'clickup.quality_min_desc' => 20,
             'clickup.user_names' => [
                 'arefmohaamd332@gmail.com' => 'عارف',
             ],
@@ -31,10 +32,22 @@ class PollClickUpDoneTasksTest extends TestCase
 
     public function test_it_notifies_telegram_for_newly_done_tasks(): void
     {
-        Http::fake([
-            'api.clickup.com/api/v2/team/90121842245/task*' => Http::response([
-                'tasks' => [
-                    [
+        Http::fake(function ($request) {
+            $url = $request->url();
+
+            if (str_contains($url, 'api.telegram.org')) {
+                return Http::response(['ok' => true], 200);
+            }
+
+            if (str_contains($url, '/api/v2/task/task_1')) {
+                return Http::response($this->richDoneTask(), 200);
+            }
+
+            if (str_contains($url, '/team/90121842245/task')) {
+                $page = (int) ($request['page'] ?? 0);
+
+                return Http::response([
+                    'tasks' => $page > 0 ? [] : [[
                         'id' => 'task_1',
                         'name' => 'رفع باگ لاگین',
                         'date_updated' => '1700000000000',
@@ -48,11 +61,12 @@ class PollClickUpDoneTasksTest extends TestCase
                                 'username' => 'Aref',
                             ],
                         ],
-                    ],
-                ],
-            ], 200),
-            'api.telegram.org/*' => Http::response(['ok' => true], 200),
-        ]);
+                    ]],
+                ], 200);
+            }
+
+            return Http::response(['ok' => true], 200);
+        });
 
         $count = app(PollClickUpDoneTasks::class)->poll();
 
@@ -66,10 +80,22 @@ class PollClickUpDoneTasksTest extends TestCase
 
     public function test_it_does_not_send_duplicate_notifications(): void
     {
-        Http::fake([
-            'api.clickup.com/api/v2/team/90121842245/task*' => Http::response([
-                'tasks' => [
-                    [
+        Http::fake(function ($request) {
+            $url = $request->url();
+
+            if (str_contains($url, 'api.telegram.org')) {
+                return Http::response(['ok' => true], 200);
+            }
+
+            if (str_contains($url, '/api/v2/task/task_1')) {
+                return Http::response($this->richDoneTask(), 200);
+            }
+
+            if (str_contains($url, '/team/90121842245/task')) {
+                $page = (int) ($request['page'] ?? 0);
+
+                return Http::response([
+                    'tasks' => $page > 0 ? [] : [[
                         'id' => 'task_1',
                         'name' => 'رفع باگ لاگین',
                         'date_updated' => '1700000000000',
@@ -83,18 +109,25 @@ class PollClickUpDoneTasksTest extends TestCase
                                 'username' => 'Aref',
                             ],
                         ],
-                    ],
-                ],
-            ], 200),
-            'api.telegram.org/*' => Http::response(['ok' => true], 200),
-        ]);
+                    ]],
+                ], 200);
+            }
+
+            return Http::response(['ok' => true], 200);
+        });
 
         $poller = app(PollClickUpDoneTasks::class);
 
         $this->assertSame(1, $poller->poll());
         $this->assertSame(0, $poller->poll());
 
-        Http::assertSentCount(2);
+        $telegramSends = collect(Http::recorded())
+            ->filter(function (array $pair): bool {
+                return str_contains($pair[0]->url(), 'api.telegram.org/bot');
+            })
+            ->count();
+
+        $this->assertSame(1, $telegramSends);
     }
 
     public function test_it_ignores_tasks_that_are_not_done(): void
@@ -118,6 +151,32 @@ class PollClickUpDoneTasksTest extends TestCase
         $count = app(PollClickUpDoneTasks::class)->poll();
 
         $this->assertSame(0, $count);
-        Http::assertNothingSent();
+        Http::assertNotSent(function ($request) {
+            return str_contains($request->url(), 'api.telegram.org');
+        });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function richDoneTask(): array
+    {
+        return [
+            'id' => 'task_1',
+            'name' => 'رفع باگ لاگین',
+            'description' => 'توضیح کامل برای گیت کیفیت و لینک https://github.com/org/repo/pull/1',
+            'status' => [
+                'status' => 'complete',
+                'type' => 'closed',
+            ],
+            'list' => ['id' => '901200123456'],
+            'assignees' => [
+                [
+                    'email' => 'arefmohaamd332@gmail.com',
+                    'username' => 'Aref',
+                ],
+            ],
+            'attachments' => [],
+        ];
     }
 }

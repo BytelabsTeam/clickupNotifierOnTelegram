@@ -12,9 +12,7 @@ class PollClickUpDoneTasks
     public function __construct(
         private readonly ClickUpClient $clickUpClient,
         private readonly TaskDoneDetector $taskDoneDetector,
-        private readonly UserNameResolver $userNameResolver,
-        private readonly TelegramNotifier $telegramNotifier,
-        private readonly TaskScoreSyncService $taskScoreSyncService,
+        private readonly TaskQualityGateService $taskQualityGateService,
     ) {
     }
 
@@ -23,6 +21,7 @@ class PollClickUpDoneTasks
         $sinceMs = $this->resolveSinceTimestampMs();
         $tasks = $this->clickUpClient->getTasksUpdatedSince($sinceMs);
         $notifiedCount = 0;
+        $seenTaskIds = [];
 
         foreach ($tasks as $task) {
             if (! is_array($task) || ! $this->taskDoneDetector->isApiTaskDone($task)) {
@@ -31,10 +30,11 @@ class PollClickUpDoneTasks
 
             $taskId = (string) ($task['id'] ?? '');
 
-            if ($taskId === '') {
+            if ($taskId === '' || isset($seenTaskIds[$taskId])) {
                 continue;
             }
 
+            $seenTaskIds[$taskId] = true;
             $updatedAt = (string) ($task['date_updated'] ?? 'unknown');
             $cacheKey = "clickup_poll:notified:{$taskId}:{$updatedAt}";
 
@@ -43,22 +43,17 @@ class PollClickUpDoneTasks
             }
 
             [$email, $username] = $this->resolveTaskUser($task);
-            $displayName = $this->userNameResolver->resolve($email, $username);
             $fullTask = $this->clickUpClient->getTask($taskId);
-            $taskName = (string) ($fullTask['name'] ?? $task['name'] ?? $taskId);
-            $projectTag = $this->clickUpClient->resolveProjectTag($fullTask);
-            $message = $this->telegramNotifier->formatMessage($displayName, $taskName, $projectTag);
-            $media = $this->clickUpClient->extractMediaAttachments($fullTask['attachments'] ?? []);
 
-            $this->telegramNotifier->send($message, $media);
-
-            try {
-                $this->taskScoreSyncService->scoreTaskIfNeeded($fullTask, $email, $username);
-            } catch (\Throwable $exception) {
-                report($exception);
+            if ($fullTask === []) {
+                $fullTask = $task;
             }
 
-            $notifiedCount++;
+            $result = $this->taskQualityGateService->notifyOrGate($fullTask, $email, $username);
+
+            if ($result['sent']) {
+                $notifiedCount++;
+            }
         }
 
         Cache::put(self::LAST_CHECK_CACHE_KEY, $this->currentTimestampMs(), now()->addDays(30));

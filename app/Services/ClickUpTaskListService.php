@@ -22,61 +22,17 @@ class ClickUpTaskListService
 
     public function formatDueThroughTomorrow(): string
     {
-        $timezone = $this->timezone();
-        $tomorrow = Carbon::now($timezone)->addDay()->toDateString();
-
-        $tasks = array_values(array_filter(
-            $this->openTasks(),
-            function (array $task) use ($tomorrow, $timezone): bool {
-                if (! is_numeric($task['due_date'] ?? null)) {
-                    return false;
-                }
-
-                $dueDate = Carbon::createFromTimestampMs((int) $task['due_date'], $timezone)->toDateString();
-
-                return $dueDate <= $tomorrow;
-            }
-        ));
-
-        return $this->format($tasks, 'تسک‌های امروز، فردا و عقب‌افتاده');
+        return $this->format($this->dueThroughTomorrowTasks(), 'تسک‌های امروز، فردا و عقب‌افتاده');
     }
 
     public function formatDueToday(): string
     {
-        $timezone = $this->timezone();
-        $today = Carbon::now($timezone)->toDateString();
-
-        $tasks = array_values(array_filter(
-            $this->openTasks(),
-            function (array $task) use ($today, $timezone): bool {
-                if (! is_numeric($task['due_date'] ?? null)) {
-                    return false;
-                }
-
-                return Carbon::createFromTimestampMs((int) $task['due_date'], $timezone)->toDateString() === $today;
-            }
-        ));
-
-        return $this->format($tasks, 'تسک‌های امروز');
+        return $this->format($this->dueTodayTasks(), 'تسک‌های امروز');
     }
 
     public function formatOverdue(): string
     {
-        $timezone = $this->timezone();
-        $today = Carbon::now($timezone)->toDateString();
-
-        $tasks = array_values(array_filter(
-            $this->openTasks(),
-            function (array $task) use ($today, $timezone): bool {
-                if (! is_numeric($task['due_date'] ?? null)) {
-                    return false;
-                }
-
-                return Carbon::createFromTimestampMs((int) $task['due_date'], $timezone)->toDateString() < $today;
-            }
-        ));
-
-        return $this->format($tasks, 'تسک‌های عقب‌افتاده');
+        return $this->format($this->overdueTasks(), 'تسک‌های عقب‌افتاده');
     }
 
     public function formatForTelegramUsername(string $username): string
@@ -97,7 +53,7 @@ class ClickUpTaskListService
     /**
      * @return list<array<string, mixed>>
      */
-    private function openTasks(): array
+    public function openTasks(): array
     {
         $tasks = [];
 
@@ -116,6 +72,83 @@ class ClickUpTaskListService
         }
 
         return $tasks;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function dueThroughTomorrowTasks(): array
+    {
+        $timezone = $this->timezone();
+        $tomorrow = Carbon::now($timezone)->addDay()->toDateString();
+
+        return array_values(array_filter(
+            $this->openTasks(),
+            function (array $task) use ($tomorrow, $timezone): bool {
+                if (! is_numeric($task['due_date'] ?? null)) {
+                    return false;
+                }
+
+                $dueDate = Carbon::createFromTimestampMs((int) $task['due_date'], $timezone)->toDateString();
+
+                return $dueDate <= $tomorrow;
+            }
+        ));
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function dueTodayTasks(): array
+    {
+        $timezone = $this->timezone();
+        $today = Carbon::now($timezone)->toDateString();
+
+        return array_values(array_filter(
+            $this->openTasks(),
+            function (array $task) use ($today, $timezone): bool {
+                if (! is_numeric($task['due_date'] ?? null)) {
+                    return false;
+                }
+
+                return Carbon::createFromTimestampMs((int) $task['due_date'], $timezone)->toDateString() === $today;
+            }
+        ));
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function overdueTasks(): array
+    {
+        $timezone = $this->timezone();
+        $today = Carbon::now($timezone)->toDateString();
+
+        return array_values(array_filter(
+            $this->openTasks(),
+            function (array $task) use ($today, $timezone): bool {
+                if (! is_numeric($task['due_date'] ?? null)) {
+                    return false;
+                }
+
+                return Carbon::createFromTimestampMs((int) $task['due_date'], $timezone)->toDateString() < $today;
+            }
+        ));
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function tasksForTelegramUsername(string $username): array
+    {
+        $email = $this->emailForTelegramUsername($username);
+
+        return $this->openTasksAssignedTo($email, $username);
+    }
+
+    public function resolveEmailForTelegramUsername(string $username): ?string
+    {
+        return $this->emailForTelegramUsername($username);
     }
 
     /**

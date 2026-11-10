@@ -71,6 +71,35 @@ class TelegramNotifier
         return $messageId;
     }
 
+    /**
+     * @param  list<list<array{text: string, callback_data?: string, url?: string}>>  $inlineKeyboard
+     */
+    public function replyWithInlineKeyboard(
+        string|int $chatId,
+        string $text,
+        array $inlineKeyboard,
+        string|int|null $messageThreadId = null,
+    ): ?int {
+        $chunks = $this->chunkText($text);
+        $first = $chunks[0] ?? $text;
+
+        $json = $this->postForm('sendMessage', $this->applyThreadId([
+            'chat_id' => $chatId,
+            'text' => $first,
+            'reply_markup' => json_encode([
+                'inline_keyboard' => $inlineKeyboard,
+            ], JSON_UNESCAPED_UNICODE),
+        ], $messageThreadId));
+
+        foreach (array_slice($chunks, 1) as $chunk) {
+            $this->reply($chatId, $chunk, $messageThreadId);
+        }
+
+        $id = $json['result']['message_id'] ?? null;
+
+        return is_numeric($id) ? (int) $id : null;
+    }
+
     public function edit(string|int $chatId, int $messageId, string $text, ?array $replyMarkup = null): void
     {
         $chunks = $this->chunkText($text);
@@ -100,17 +129,12 @@ class TelegramNotifier
     {
         [, $chatId] = $this->credentials();
 
-        $json = $this->postForm('sendMessage', $this->applyThreadId([
-            'chat_id' => $chatId,
-            'text' => $text,
-            'reply_markup' => json_encode([
-                'inline_keyboard' => $inlineKeyboard,
-            ], JSON_UNESCAPED_UNICODE),
-        ], config('telegram.message_thread_id')));
-
-        $id = $json['result']['message_id'] ?? null;
-
-        return is_numeric($id) ? (int) $id : null;
+        return $this->replyWithInlineKeyboard(
+            $chatId,
+            $text,
+            $inlineKeyboard,
+            config('telegram.message_thread_id')
+        );
     }
 
     public function answerCallbackQuery(string $callbackQueryId, string $text = '', bool $showAlert = false): void
@@ -150,14 +174,16 @@ class TelegramNotifier
 
         Http::asForm()->post("https://api.telegram.org/bot{$token}/setMyCommands", [
             'commands' => json_encode([
+                ['command' => 'menu', 'description' => 'منوی مدیریت تسک‌ها'],
+                ['command' => 'task', 'description' => 'ساخت تسک از متن فارسی'],
+                ['command' => 'newtask', 'description' => 'ایجاد تسک ساده'],
                 ['command' => 'tasks', 'description' => 'لیست تسک‌های باز'],
                 ['command' => 'today', 'description' => 'تسک‌های امروز'],
-                ['command' => 'tomorrow', 'description' => 'تسک‌های امروز، فردا و عقب‌افتاده'],
-                ['command' => 'overdue', 'description' => 'تسک‌های عقب‌افتاده'],
                 ['command' => 'me', 'description' => 'فقط تسک‌های خودت'],
+                ['command' => 'streaks', 'description' => 'استریک و قهرمان هفته'],
+                ['command' => 'scoresday', 'description' => 'جزئیات امتیاز امروز'],
+                ['command' => 'scoresweek', 'description' => 'جزئیات امتیاز این هفته'],
                 ['command' => 'topday', 'description' => 'برترین‌های امروز'],
-                ['command' => 'topweek', 'description' => 'برترین‌های این هفته'],
-                ['command' => 'topmonth', 'description' => 'برترین‌های این ماه'],
                 ['command' => 'help', 'description' => 'راهنما'],
             ], JSON_UNESCAPED_UNICODE),
         ])->throw();
