@@ -9,7 +9,7 @@ class BackupMissedDoneTasksCommand extends Command
 {
     protected $signature = 'clickup:backup-missed-tasks';
 
-    protected $description = 'Backfill unscored done ClickUp tasks from the last week, one day/batch at a time';
+    protected $description = 'Backfill unscored ClickUp tasks and GitHub commits from the last week, one day/batch at a time';
 
     public function handle(BackupMissedDoneTasks $backup): int
     {
@@ -21,15 +21,25 @@ class BackupMissedDoneTasksCommand extends Command
             return self::FAILURE;
         }
 
+        $clickup = $result['clickup'];
+        $github = $result['github'];
+
         $this->info(sprintf(
-            'Day: %s | fetched: %d | queued: %d | registered: %d | notified: %d | remaining days: %d | remaining tasks: %d',
-            $result['day'] ?? '—',
-            $result['fetched'],
-            $result['queued'],
-            $result['registered'],
-            $result['notified'],
-            $result['remaining_days'],
-            $result['remaining_tasks']
+            'ClickUp day: %s | registered: %d | notified: %d | remaining days/tasks: %d/%d',
+            $clickup['day'] ?? '—',
+            $clickup['registered'],
+            $clickup['notified'],
+            $clickup['remaining_days'],
+            $clickup['remaining_tasks']
+        ));
+
+        $this->info(sprintf(
+            'GitHub day: %s | registered: %d | notified: %d | remaining days/commits: %d/%d',
+            $github['day'] ?? '—',
+            $github['registered'],
+            $github['notified'],
+            $github['remaining_days'],
+            $github['remaining_commits']
         ));
 
         return self::SUCCESS;

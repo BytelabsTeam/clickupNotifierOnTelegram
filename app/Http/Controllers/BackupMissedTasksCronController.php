@@ -40,6 +40,8 @@ class BackupMissedTasksCronController extends Controller
             'notified' => $result['notified'],
             'remaining_days' => $result['remaining_days'],
             'remaining_tasks' => $result['remaining_tasks'],
+            'clickup' => $result['clickup'],
+            'github' => $result['github'],
             'checked_at' => now()->toIso8601String(),
         ]);
     }

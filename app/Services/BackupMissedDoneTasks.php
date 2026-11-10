@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\CommitScore;
 use App\Models\TaskScore;
 use App\Support\TaskDoneDetector;
 use Carbon\Carbon;
@@ -17,20 +18,165 @@ class BackupMissedDoneTasks
 
     private const LAST_SEED_KEY = 'clickup_backup_missed:last_seed_date';
 
-    private const LOCK_KEY = 'clickup_backup_missed:lock';
+    private const GITHUB_DAY_QUEUE_KEY = 'github_backup_missed:day_queue';
+
+    private const GITHUB_COMMIT_QUEUE_KEY = 'github_backup_missed:commit_queue';
+
+    private const GITHUB_LAST_SEED_KEY = 'github_backup_missed:last_seed_date';
+
+    private const LOCK_KEY = 'backup_missed:lock';
 
     public function __construct(
         private readonly ClickUpClient $clickUpClient,
+        private readonly GitHubClient $gitHubClient,
         private readonly TaskDoneDetector $taskDoneDetector,
         private readonly TaskScoreSyncService $taskScoreSyncService,
+        private readonly CommitScoreSyncService $commitScoreSyncService,
         private readonly TelegramNotifier $telegramNotifier,
         private readonly UserNameResolver $userNameResolver,
+        private readonly CommitMessageTranslator $commitMessageTranslator,
     ) {
     }
 
     /**
-     * Process one slice of the backlog: drain a few queued tasks, or fetch the next day into the queue.
+     * Process one slice of ClickUp + GitHub backlog so the cron does not hang.
      *
+     * @return array{
+     *     day: ?string,
+     *     fetched: int,
+     *     queued: int,
+     *     registered: int,
+     *     notified: int,
+     *     remaining_days: int,
+     *     remaining_tasks: int,
+     *     clickup: array{
+     *         day: ?string,
+     *         fetched: int,
+     *         queued: int,
+     *         registered: int,
+     *         notified: int,
+     *         remaining_days: int,
+     *         remaining_tasks: int
+     *     },
+     *     github: array{
+     *         day: ?string,
+     *         fetched: int,
+     *         queued: int,
+     *         registered: int,
+     *         notified: int,
+     *         remaining_days: int,
+     *         remaining_commits: int
+     *     }
+     * }
+     */
+    public function run(): array
+    {
+        $emptySource = [
+            'day' => null,
+            'fetched' => 0,
+            'queued' => 0,
+            'registered' => 0,
+            'notified' => 0,
+            'remaining_days' => 0,
+            'remaining_tasks' => 0,
+        ];
+
+        $emptyGithub = [
+            'day' => null,
+            'fetched' => 0,
+            'queued' => 0,
+            'registered' => 0,
+            'notified' => 0,
+            'remaining_days' => 0,
+            'remaining_commits' => 0,
+        ];
+
+        $lock = Cache::lock(self::LOCK_KEY, 180);
+
+        try {
+            if (! $lock->get()) {
+                return $this->combineResults($emptySource, $emptyGithub);
+            }
+        } catch (Throwable $exception) {
+            Log::warning('Backup missed lock failed: '.$exception->getMessage());
+        }
+
+        try {
+            $clickup = $this->runClickUp();
+            $github = $this->runGitHub();
+
+            return $this->combineResults($clickup, $github);
+        } finally {
+            try {
+                $lock->release();
+            } catch (Throwable) {
+            }
+        }
+    }
+
+    /**
+     * @param  array{
+     *     day: ?string,
+     *     fetched: int,
+     *     queued: int,
+     *     registered: int,
+     *     notified: int,
+     *     remaining_days: int,
+     *     remaining_tasks: int
+     * }  $clickup
+     * @param  array{
+     *     day: ?string,
+     *     fetched: int,
+     *     queued: int,
+     *     registered: int,
+     *     notified: int,
+     *     remaining_days: int,
+     *     remaining_commits: int
+     * }  $github
+     * @return array{
+     *     day: ?string,
+     *     fetched: int,
+     *     queued: int,
+     *     registered: int,
+     *     notified: int,
+     *     remaining_days: int,
+     *     remaining_tasks: int,
+     *     clickup: array{
+     *         day: ?string,
+     *         fetched: int,
+     *         queued: int,
+     *         registered: int,
+     *         notified: int,
+     *         remaining_days: int,
+     *         remaining_tasks: int
+     *     },
+     *     github: array{
+     *         day: ?string,
+     *         fetched: int,
+     *         queued: int,
+     *         registered: int,
+     *         notified: int,
+     *         remaining_days: int,
+     *         remaining_commits: int
+     *     }
+     * }
+     */
+    private function combineResults(array $clickup, array $github): array
+    {
+        return [
+            'day' => $clickup['day'] ?? $github['day'],
+            'fetched' => $clickup['fetched'] + $github['fetched'],
+            'queued' => $clickup['queued'] + $github['queued'],
+            'registered' => $clickup['registered'] + $github['registered'],
+            'notified' => $clickup['notified'] + $github['notified'],
+            'remaining_days' => $clickup['remaining_days'] + $github['remaining_days'],
+            'remaining_tasks' => $clickup['remaining_tasks'] + $github['remaining_commits'],
+            'clickup' => $clickup,
+            'github' => $github,
+        ];
+    }
+
+    /**
      * @return array{
      *     day: ?string,
      *     fetched: int,
@@ -41,7 +187,7 @@ class BackupMissedDoneTasks
      *     remaining_tasks: int
      * }
      */
-    public function run(): array
+    private function runClickUp(): array
     {
         $empty = [
             'day' => null,
@@ -56,60 +202,27 @@ class BackupMissedDoneTasks
         try {
             $this->clickUpClient->requireConfigured();
         } catch (\RuntimeException $exception) {
-            Log::warning('Backup missed done tasks skipped: '.$exception->getMessage());
+            Log::warning('Backup missed ClickUp skipped: '.$exception->getMessage());
 
             return $empty;
         }
 
-        $lock = Cache::lock(self::LOCK_KEY, 120);
-
-        try {
-            if (! $lock->get()) {
-                return $empty;
-            }
-        } catch (Throwable $exception) {
-            Log::warning('Backup missed done tasks lock failed: '.$exception->getMessage());
-        }
-
-        try {
-            return $this->runLocked();
-        } finally {
-            try {
-                $lock->release();
-            } catch (Throwable) {
-            }
-        }
-    }
-
-    /**
-     * @return array{
-     *     day: ?string,
-     *     fetched: int,
-     *     queued: int,
-     *     registered: int,
-     *     notified: int,
-     *     remaining_days: int,
-     *     remaining_tasks: int
-     * }
-     */
-    private function runLocked(): array
-    {
-        $this->ensureDayQueue();
+        $this->ensureDayQueue(
+            self::DAY_QUEUE_KEY,
+            self::TASK_QUEUE_KEY,
+            self::LAST_SEED_KEY
+        );
 
         $day = null;
         $fetched = 0;
         $queued = 0;
-
         $taskQueue = $this->taskQueue();
-
-        // Skip empty days in one run so the week queue does not stall, but still
-        // only score a small batch of missing tasks to avoid hanging on LLM calls.
         $maxDayFetches = max(1, (int) config('clickup.backup_lookback_days', 7));
 
         for ($fetch = 0; $fetch < $maxDayFetches && $taskQueue === []; $fetch++) {
-            $dayQueue = $this->dayQueue();
+            $dayQueue = $this->stringQueue(self::DAY_QUEUE_KEY);
             $nextDay = array_shift($dayQueue);
-            $this->putDayQueue($dayQueue);
+            $this->putStringQueue(self::DAY_QUEUE_KEY, $dayQueue);
 
             if ($nextDay === null) {
                 break;
@@ -136,15 +249,11 @@ class BackupMissedDoneTasks
             $taskId = (string) ($item['task_id'] ?? '');
             $itemDay = (string) ($item['day'] ?? '');
 
-            if ($taskId === '') {
+            if ($taskId === '' || TaskScore::query()->where('task_id', $taskId)->exists()) {
                 continue;
             }
 
-            if (TaskScore::query()->where('task_id', $taskId)->exists()) {
-                continue;
-            }
-
-            $result = $this->registerAndNotify($taskId, $itemDay);
+            $result = $this->registerAndNotifyTask($taskId, $itemDay);
 
             if ($result['registered']) {
                 $registered++;
@@ -163,20 +272,136 @@ class BackupMissedDoneTasks
             'queued' => $queued,
             'registered' => $registered,
             'notified' => $notified,
-            'remaining_days' => count($this->dayQueue()),
+            'remaining_days' => count($this->stringQueue(self::DAY_QUEUE_KEY)),
             'remaining_tasks' => count($taskQueue),
         ];
     }
 
-    private function ensureDayQueue(): void
+    /**
+     * @return array{
+     *     day: ?string,
+     *     fetched: int,
+     *     queued: int,
+     *     registered: int,
+     *     notified: int,
+     *     remaining_days: int,
+     *     remaining_commits: int
+     * }
+     */
+    private function runGitHub(): array
     {
-        if ($this->dayQueue() !== [] || $this->taskQueue() !== []) {
+        $empty = [
+            'day' => null,
+            'fetched' => 0,
+            'queued' => 0,
+            'registered' => 0,
+            'notified' => 0,
+            'remaining_days' => 0,
+            'remaining_commits' => 0,
+        ];
+
+        try {
+            if ($this->gitHubClient->repos() === []) {
+                return $empty;
+            }
+
+            $this->gitHubClient->requireToken();
+        } catch (\RuntimeException $exception) {
+            Log::warning('Backup missed GitHub skipped: '.$exception->getMessage());
+
+            return $empty;
+        }
+
+        $this->ensureDayQueue(
+            self::GITHUB_DAY_QUEUE_KEY,
+            self::GITHUB_COMMIT_QUEUE_KEY,
+            self::GITHUB_LAST_SEED_KEY
+        );
+
+        $day = null;
+        $fetched = 0;
+        $queued = 0;
+        $commitQueue = $this->commitQueue();
+        $maxDayFetches = max(1, (int) config('clickup.backup_lookback_days', 7));
+
+        for ($fetch = 0; $fetch < $maxDayFetches && $commitQueue === []; $fetch++) {
+            $dayQueue = $this->stringQueue(self::GITHUB_DAY_QUEUE_KEY);
+            $nextDay = array_shift($dayQueue);
+            $this->putStringQueue(self::GITHUB_DAY_QUEUE_KEY, $dayQueue);
+
+            if ($nextDay === null) {
+                break;
+            }
+
+            $day = $nextDay;
+            [$dayFetched, $dayQueued, $commitQueue] = $this->enqueueMissingCommitsForDay($day);
+            $fetched += $dayFetched;
+            $queued += $dayQueued;
+            $this->putCommitQueue($commitQueue);
+        }
+
+        $batchSize = max(1, (int) config('clickup.backup_tasks_per_run', 3));
+        $registered = 0;
+        $notified = 0;
+
+        for ($i = 0; $i < $batchSize && $commitQueue !== []; $i++) {
+            $item = array_shift($commitQueue);
+
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $sha = (string) ($item['sha'] ?? '');
+            $repo = (string) ($item['repo'] ?? '');
+            $itemDay = (string) ($item['day'] ?? '');
+
+            if ($sha === '' || $repo === '') {
+                continue;
+            }
+
+            if (CommitScore::query()->where('sha', $sha)->where('repo', $repo)->exists()) {
+                continue;
+            }
+
+            $result = $this->registerAndNotifyCommit($item, $itemDay);
+
+            if ($result['registered']) {
+                $registered++;
+            }
+
+            if ($result['notified']) {
+                $notified++;
+            }
+        }
+
+        $this->putCommitQueue($commitQueue);
+
+        return [
+            'day' => $day,
+            'fetched' => $fetched,
+            'queued' => $queued,
+            'registered' => $registered,
+            'notified' => $notified,
+            'remaining_days' => count($this->stringQueue(self::GITHUB_DAY_QUEUE_KEY)),
+            'remaining_commits' => count($commitQueue),
+        ];
+    }
+
+    private function ensureDayQueue(string $dayKey, string $itemKey, string $seedKey): void
+    {
+        if ($this->stringQueue($dayKey) !== []) {
+            return;
+        }
+
+        $items = Cache::get($itemKey, []);
+
+        if (is_array($items) && $items !== []) {
             return;
         }
 
         $timezone = $this->timezone();
         $today = Carbon::now($timezone)->toDateString();
-        $lastSeed = Cache::get(self::LAST_SEED_KEY);
+        $lastSeed = Cache::get($seedKey);
 
         if (is_string($lastSeed) && $lastSeed === $today) {
             return;
@@ -189,8 +414,8 @@ class BackupMissedDoneTasks
             $days[] = Carbon::now($timezone)->subDays($offset)->toDateString();
         }
 
-        $this->putDayQueue($days);
-        Cache::put(self::LAST_SEED_KEY, $today, now()->addDays(14));
+        $this->putStringQueue($dayKey, $days);
+        Cache::put($seedKey, $today, now()->addDays(14));
     }
 
     /**
@@ -238,9 +463,57 @@ class BackupMissedDoneTasks
     }
 
     /**
+     * @return array{0: int, 1: int, 2: list<array{sha: string, repo: string, day: string, message: string, login: ?string, email: ?string, name: ?string, committed_at: string}>}
+     */
+    private function enqueueMissingCommitsForDay(string $day): array
+    {
+        $timezone = $this->timezone();
+        $from = Carbon::parse($day, $timezone)->startOfDay()->utc();
+        $to = Carbon::parse($day, $timezone)->endOfDay()->utc();
+
+        $commits = $this->gitHubClient->recentCommits($from, $to);
+        $queue = [];
+        $seen = [];
+
+        foreach ($commits as $commit) {
+            $sha = (string) ($commit['sha'] ?? '');
+            $repo = (string) ($commit['repo'] ?? '');
+
+            if ($sha === '' || $repo === '') {
+                continue;
+            }
+
+            $key = mb_strtolower($repo).'|'.$sha;
+
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+
+            if (CommitScore::query()->where('sha', $sha)->where('repo', $repo)->exists()) {
+                continue;
+            }
+
+            $queue[] = [
+                'sha' => $sha,
+                'repo' => $repo,
+                'day' => $day,
+                'message' => (string) ($commit['message'] ?? ''),
+                'login' => $commit['login'] ?? null,
+                'email' => $commit['email'] ?? null,
+                'name' => $commit['name'] ?? null,
+                'committed_at' => (string) ($commit['committed_at'] ?? ''),
+            ];
+        }
+
+        return [count($commits), count($queue), $queue];
+    }
+
+    /**
      * @return array{registered: bool, notified: bool}
      */
-    private function registerAndNotify(string $taskId, string $day): array
+    private function registerAndNotifyTask(string $taskId, string $day): array
     {
         $task = $this->clickUpClient->getTask($taskId);
 
@@ -300,6 +573,68 @@ class BackupMissedDoneTasks
     }
 
     /**
+     * @param  array{sha: string, repo: string, day?: string, message?: string, login?: ?string, email?: ?string, name?: ?string, committed_at?: string}  $item
+     * @return array{registered: bool, notified: bool}
+     */
+    private function registerAndNotifyCommit(array $item, string $day): array
+    {
+        $sha = (string) ($item['sha'] ?? '');
+        $repo = (string) ($item['repo'] ?? '');
+
+        try {
+            $score = $this->commitScoreSyncService->scoreCommitIfNeeded($item);
+        } catch (Throwable $exception) {
+            Log::warning("Backup missed commit score failed for {$repo}@{$sha}: ".$exception->getMessage());
+
+            return ['registered' => false, 'notified' => false];
+        }
+
+        if ($score === null) {
+            return ['registered' => false, 'notified' => false];
+        }
+
+        $cacheKey = 'github_backup_missed:notified:'.mb_strtolower($repo).'|'.$sha;
+
+        if (! Cache::add($cacheKey, true, now()->addDays(30))) {
+            return ['registered' => true, 'notified' => false];
+        }
+
+        $identity = $this->commitIdentity(
+            isset($item['login']) ? (string) $item['login'] : null,
+            isset($item['email']) ? (string) $item['email'] : null,
+            isset($item['name']) ? (string) $item['name'] : null,
+        );
+        $displayName = $this->userNameResolver->resolve($identity['email'], $identity['username']);
+        $message = trim((string) ($item['message'] ?? $score->message ?? $sha));
+        $translated = $this->commitMessageTranslator->toPersian($message);
+        $repoName = str_contains($repo, '/') ? (string) substr($repo, (int) strrpos($repo, '/') + 1) : $repo;
+        $dateLabel = $day !== '' ? $day : $this->resolveCommitDate($item);
+        $scoreLabel = (int) $score->score;
+
+        $lines = [
+            '⚠️ کامیت قدیمی ثبت نشده',
+            $displayName,
+            $translated,
+            '#'.$repoName,
+            'تاریخ: '.$dateLabel,
+        ];
+
+        if ($scoreLabel > 0) {
+            $lines[] = 'امتیاز: '.$scoreLabel;
+        }
+
+        try {
+            $this->telegramNotifier->send(implode("\n", $lines));
+        } catch (Throwable $exception) {
+            Log::warning("Backup missed commit telegram failed for {$repo}@{$sha}: ".$exception->getMessage());
+
+            return ['registered' => true, 'notified' => false];
+        }
+
+        return ['registered' => true, 'notified' => true];
+    }
+
+    /**
      * @param  list<mixed>  $tasks
      * @return list<string>
      */
@@ -350,6 +685,32 @@ class BackupMissedDoneTasks
     }
 
     /**
+     * @return array{email: ?string, username: ?string}
+     */
+    private function commitIdentity(?string $login, ?string $email, ?string $name): array
+    {
+        $login = $login !== null && $login !== '' ? mb_strtolower(ltrim(trim($login), '@')) : '';
+        $email = $email !== null && $email !== '' ? mb_strtolower(trim($email)) : '';
+        $name = $name !== null ? trim($name) : '';
+
+        $mappedEmail = null;
+
+        if ($login !== '') {
+            foreach (config('github.user_logins', []) as $mapped => $mappedLogin) {
+                if (mb_strtolower(ltrim(trim((string) $mappedLogin), '@')) === $login) {
+                    $mappedEmail = mb_strtolower((string) $mapped);
+                    break;
+                }
+            }
+        }
+
+        return [
+            'email' => $mappedEmail ?? ($email !== '' ? $email : null),
+            'username' => $login !== '' ? $login : ($name !== '' ? $name : null),
+        ];
+    }
+
+    /**
      * @param  array<string, mixed>  $task
      */
     private function resolveCompletedDate(array $task): string
@@ -366,11 +727,25 @@ class BackupMissedDoneTasks
     }
 
     /**
+     * @param  array{committed_at?: string}  $item
+     */
+    private function resolveCommitDate(array $item): string
+    {
+        $raw = (string) ($item['committed_at'] ?? '');
+
+        if ($raw === '') {
+            return Carbon::now($this->timezone())->toDateString();
+        }
+
+        return Carbon::parse($raw, 'UTC')->timezone($this->timezone())->toDateString();
+    }
+
+    /**
      * @return list<string>
      */
-    private function dayQueue(): array
+    private function stringQueue(string $key): array
     {
-        $value = Cache::get(self::DAY_QUEUE_KEY, []);
+        $value = Cache::get($key, []);
 
         if (! is_array($value)) {
             return [];
@@ -382,9 +757,9 @@ class BackupMissedDoneTasks
     /**
      * @param  list<string>  $days
      */
-    private function putDayQueue(array $days): void
+    private function putStringQueue(string $key, array $days): void
     {
-        Cache::put(self::DAY_QUEUE_KEY, array_values($days), now()->addDays(14));
+        Cache::put($key, array_values($days), now()->addDays(14));
     }
 
     /**
@@ -427,6 +802,54 @@ class BackupMissedDoneTasks
     private function putTaskQueue(array $queue): void
     {
         Cache::put(self::TASK_QUEUE_KEY, array_values($queue), now()->addDays(14));
+    }
+
+    /**
+     * @return list<array{sha: string, repo: string, day: string, message: string, login: ?string, email: ?string, name: ?string, committed_at: string}>
+     */
+    private function commitQueue(): array
+    {
+        $value = Cache::get(self::GITHUB_COMMIT_QUEUE_KEY, []);
+
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $queue = [];
+
+        foreach ($value as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $sha = (string) ($item['sha'] ?? '');
+            $repo = (string) ($item['repo'] ?? '');
+
+            if ($sha === '' || $repo === '') {
+                continue;
+            }
+
+            $queue[] = [
+                'sha' => $sha,
+                'repo' => $repo,
+                'day' => (string) ($item['day'] ?? ''),
+                'message' => (string) ($item['message'] ?? ''),
+                'login' => isset($item['login']) ? (string) $item['login'] : null,
+                'email' => isset($item['email']) ? (string) $item['email'] : null,
+                'name' => isset($item['name']) ? (string) $item['name'] : null,
+                'committed_at' => (string) ($item['committed_at'] ?? ''),
+            ];
+        }
+
+        return $queue;
+    }
+
+    /**
+     * @param  list<array{sha: string, repo: string, day: string, message: string, login: ?string, email: ?string, name: ?string, committed_at: string}>  $queue
+     */
+    private function putCommitQueue(array $queue): void
+    {
+        Cache::put(self::GITHUB_COMMIT_QUEUE_KEY, array_values($queue), now()->addDays(14));
     }
 
     private function timezone(): string

@@ -2,8 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Models\CommitScore;
+use App\Models\ProjectScoringDoc;
 use App\Models\TaskScore;
 use App\Services\BackupMissedDoneTasks;
+use App\Services\CommitLlmScorer;
+use App\Services\CommitMessageTranslator;
 use App\Services\IranRouterClient;
 use App\Services\TaskLlmScorer;
 use Carbon\Carbon;
@@ -35,6 +39,11 @@ class BackupMissedDoneTasksTest extends TestCase
             'clickup.backup_lookback_days' => 7,
             'clickup.backup_tasks_per_run' => 3,
             'clickup.cron_token' => 'secret-cron-token',
+            'github.token' => '',
+            'github.repos' => [],
+            'github.user_logins' => [
+                'arefmohaamd332@gmail.com' => 'arefdev',
+            ],
             'iranrouter.api_key' => 'test-iranrouter-key',
             'telegram.bot_token' => '123456:telegram-token',
             'telegram.chat_id' => '-1001234567890',
@@ -52,7 +61,7 @@ class BackupMissedDoneTasksTest extends TestCase
         $day = '2026-11-03';
         $doneMs = Carbon::parse($day.' 15:00:00', 'Asia/Tehran')->getTimestampMs();
 
-        $this->mockScorer(1200);
+        $this->mockTaskScorer(1200);
 
         Http::fake(function ($request) use ($day, $doneMs) {
             $url = $request->url();
@@ -104,10 +113,11 @@ class BackupMissedDoneTasksTest extends TestCase
 
         $result = app(BackupMissedDoneTasks::class)->run();
 
-        $this->assertSame($day, $result['day']);
-        $this->assertSame(1, $result['queued']);
-        $this->assertSame(1, $result['registered']);
-        $this->assertSame(1, $result['notified']);
+        $this->assertSame($day, $result['clickup']['day']);
+        $this->assertSame(1, $result['clickup']['queued']);
+        $this->assertSame(1, $result['clickup']['registered']);
+        $this->assertSame(1, $result['clickup']['notified']);
+        $this->assertSame(0, $result['github']['registered']);
 
         $this->assertDatabaseHas('task_scores', [
             'task_id' => 'old_task_1',
@@ -125,6 +135,141 @@ class BackupMissedDoneTasksTest extends TestCase
                 && str_contains($text, 'مستندات قدیمی')
                 && str_contains($text, 'تاریخ: '.$day)
                 && str_contains($text, 'امتیاز: 1200');
+        });
+    }
+
+    public function test_it_registers_missing_github_commits_and_notifies_group(): void
+    {
+        config([
+            'clickup.api_token' => '',
+            'clickup.team_id' => '',
+            'github.token' => 'ghp_test_token',
+            'github.repos' => ['acme/app'],
+        ]);
+
+        $day = '2026-11-03';
+        $committedAt = '2026-11-03T12:30:00Z';
+
+        ProjectScoringDoc::query()->create([
+            'repo' => 'acme/app',
+            'content' => 'Baseline',
+            'generated_at' => now(),
+        ]);
+
+        $iran = Mockery::mock(IranRouterClient::class);
+        $iran->shouldReceive('requireApiKey')->andReturn('test-iranrouter-key');
+        $iran->shouldReceive('chat')->andReturn('{"score": 850, "reason": "backup commit"}');
+        $this->app->instance(IranRouterClient::class, $iran);
+        $this->app->instance(CommitLlmScorer::class, new CommitLlmScorer($iran));
+
+        $translator = Mockery::mock(CommitMessageTranslator::class);
+        $translator->shouldReceive('toPersian')->andReturnUsing(fn (string $message): string => $message);
+        $this->app->instance(CommitMessageTranslator::class, $translator);
+
+        Http::fake(function ($request) use ($committedAt) {
+            $url = $request->url();
+
+            if (str_contains($url, 'api.telegram.org')) {
+                return Http::response(['ok' => true], 200);
+            }
+
+            if (str_contains($url, 'api.github.com/repos/acme/app/commits/oldsha')) {
+                return Http::response([
+                    'sha' => 'oldsha',
+                    'commit' => [
+                        'message' => 'feat: old missed commit',
+                        'author' => [
+                            'name' => 'Aref',
+                            'email' => 'arefmohaamd332@gmail.com',
+                            'date' => $committedAt,
+                        ],
+                    ],
+                    'author' => ['login' => 'arefdev'],
+                    'files' => [
+                        ['filename' => 'app.php', 'additions' => 12, 'deletions' => 2],
+                    ],
+                ], 200);
+            }
+
+            if (str_contains($url, 'api.github.com/repos/acme/app/commits')) {
+                $since = Carbon::parse((string) ($request['since'] ?? ''), 'UTC');
+                $until = Carbon::parse((string) ($request['until'] ?? ''), 'UTC');
+                $at = Carbon::parse($committedAt, 'UTC');
+
+                if ($at->lt($since) || $at->gt($until)) {
+                    return Http::response([], 200);
+                }
+
+                return Http::response([
+                    [
+                        'sha' => 'oldsha',
+                        'parents' => [['sha' => 'parent']],
+                        'commit' => [
+                            'message' => 'feat: old missed commit',
+                            'author' => [
+                                'name' => 'Aref',
+                                'email' => 'arefmohaamd332@gmail.com',
+                                'date' => $committedAt,
+                            ],
+                        ],
+                        'author' => ['login' => 'arefdev'],
+                    ],
+                    [
+                        'sha' => 'already',
+                        'parents' => [['sha' => 'parent']],
+                        'commit' => [
+                            'message' => 'already scored',
+                            'author' => [
+                                'name' => 'Aref',
+                                'email' => 'arefmohaamd332@gmail.com',
+                                'date' => $committedAt,
+                            ],
+                        ],
+                        'author' => ['login' => 'arefdev'],
+                    ],
+                ], 200);
+            }
+
+            return Http::response(['ok' => true], 200);
+        });
+
+        CommitScore::query()->create([
+            'sha' => 'already',
+            'repo' => 'acme/app',
+            'login' => 'arefdev',
+            'email' => 'arefmohaamd332@gmail.com',
+            'name' => 'Aref',
+            'message' => 'already scored',
+            'score' => 100,
+            'committed_at' => '2026-11-03 12:00:00',
+            'month' => '1405-08',
+        ]);
+
+        $result = app(BackupMissedDoneTasks::class)->run();
+
+        $this->assertSame($day, $result['github']['day']);
+        $this->assertSame(1, $result['github']['queued']);
+        $this->assertSame(1, $result['github']['registered']);
+        $this->assertSame(1, $result['github']['notified']);
+        $this->assertSame(0, $result['clickup']['registered']);
+
+        $this->assertDatabaseHas('commit_scores', [
+            'sha' => 'oldsha',
+            'repo' => 'acme/app',
+            'score' => 850,
+        ]);
+
+        Http::assertSent(function ($request) use ($day) {
+            if (! str_contains($request->url(), 'api.telegram.org/bot123456:telegram-token/sendMessage')) {
+                return false;
+            }
+
+            $text = (string) ($request['text'] ?? '');
+
+            return str_contains($text, 'کامیت قدیمی ثبت نشده')
+                && str_contains($text, 'feat: old missed commit')
+                && str_contains($text, 'تاریخ: '.$day)
+                && str_contains($text, 'امتیاز: 850');
         });
     }
 
@@ -198,6 +343,24 @@ class BackupMissedDoneTasksTest extends TestCase
                 'notified' => 1,
                 'remaining_days' => 6,
                 'remaining_tasks' => 0,
+                'clickup' => [
+                    'day' => '2026-11-03',
+                    'fetched' => 1,
+                    'queued' => 1,
+                    'registered' => 1,
+                    'notified' => 1,
+                    'remaining_days' => 6,
+                    'remaining_tasks' => 0,
+                ],
+                'github' => [
+                    'day' => null,
+                    'fetched' => 0,
+                    'queued' => 0,
+                    'registered' => 0,
+                    'notified' => 0,
+                    'remaining_days' => 0,
+                    'remaining_commits' => 0,
+                ],
             ]);
         });
 
@@ -216,7 +379,7 @@ class BackupMissedDoneTasksTest extends TestCase
         $this->get('/cron/clickup-backup-missed?token=wrong')->assertForbidden();
     }
 
-    private function mockScorer(int $score): void
+    private function mockTaskScorer(int $score): void
     {
         $iran = Mockery::mock(IranRouterClient::class);
         $iran->shouldReceive('requireApiKey')->andReturn('test-iranrouter-key');

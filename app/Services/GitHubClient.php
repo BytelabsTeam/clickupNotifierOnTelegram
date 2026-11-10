@@ -285,6 +285,53 @@ class GitHubClient
     }
 
     /**
+     * Fetch one commit with file stats for scoring.
+     *
+     * @return array{
+     *     sha: string,
+     *     repo: string,
+     *     login: ?string,
+     *     email: ?string,
+     *     name: ?string,
+     *     message: string,
+     *     committed_at: string,
+     *     files: list<array{filename: string, additions: int, deletions: int}>
+     * }|null
+     */
+    public function scoreableCommit(string $repo, string $sha): ?array
+    {
+        $parsed = $this->parseRepo($repo);
+
+        if ($parsed === null || $sha === '') {
+            return null;
+        }
+
+        $token = $this->requireToken();
+        $details = $this->commitDetails($token, $parsed['owner'], $parsed['name'], [$sha]);
+        $detail = $details[0] ?? null;
+
+        if (! is_array($detail)) {
+            return null;
+        }
+
+        $commit = is_array($detail['commit'] ?? null) ? $detail['commit'] : [];
+        $author = is_array($detail['author'] ?? null) ? $detail['author'] : [];
+        $gitAuthor = is_array($commit['author'] ?? null) ? $commit['author'] : [];
+        $slug = $parsed['owner'].'/'.$parsed['name'];
+
+        return [
+            'sha' => (string) ($detail['sha'] ?? $sha),
+            'repo' => $slug,
+            'login' => isset($author['login']) ? (string) $author['login'] : null,
+            'email' => isset($gitAuthor['email']) ? (string) $gitAuthor['email'] : null,
+            'name' => isset($gitAuthor['name']) ? (string) $gitAuthor['name'] : null,
+            'message' => trim((string) ($commit['message'] ?? '')),
+            'committed_at' => (string) ($gitAuthor['date'] ?? ''),
+            'files' => $this->normalizeFiles($detail['files'] ?? []),
+        ];
+    }
+
+    /**
      * @param  array<string, bool>  $excludeKeys  Keys already scored: "{repo}|{sha}" (repo lowercased)
      * @return array{
      *     commits: list<array{

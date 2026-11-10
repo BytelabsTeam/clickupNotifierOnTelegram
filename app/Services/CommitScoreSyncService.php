@@ -63,6 +63,102 @@ class CommitScoreSyncService
     }
 
     /**
+     * Score a single commit immediately. Idempotent by sha+repo.
+     *
+     * @param  array{
+     *     sha?: string,
+     *     repo?: string,
+     *     login?: ?string,
+     *     email?: ?string,
+     *     name?: ?string,
+     *     message?: string,
+     *     committed_at?: string,
+     *     files?: list<array{filename: string, additions: int, deletions: int}>
+     * }  $commit
+     */
+    public function scoreCommitIfNeeded(array $commit): ?CommitScore
+    {
+        $repo = (string) ($commit['repo'] ?? '');
+        $sha = (string) ($commit['sha'] ?? '');
+
+        if ($repo === '' || $sha === '') {
+            return null;
+        }
+
+        $existing = CommitScore::query()->where('sha', $sha)->where('repo', $repo)->first();
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        try {
+            app(IranRouterClient::class)->requireApiKey();
+        } catch (\RuntimeException) {
+            return null;
+        }
+
+        $files = is_array($commit['files'] ?? null) ? $commit['files'] : [];
+
+        if ($files === []) {
+            $detailed = $this->gitHubClient->scoreableCommit($repo, $sha);
+
+            if ($detailed === null) {
+                return null;
+            }
+
+            $commit = array_merge($commit, $detailed);
+            $files = is_array($commit['files'] ?? null) ? $commit['files'] : [];
+        }
+
+        $committedAt = null;
+
+        if (($commit['committed_at'] ?? '') !== '') {
+            $committedAt = Carbon::parse((string) $commit['committed_at']);
+        }
+
+        $doc = $this->projectScoringDocService->ensure($repo)->content;
+        $scoredResult = $this->commitLlmScorer->score(
+            $repo,
+            $doc,
+            (string) ($commit['message'] ?? ''),
+            $files,
+        );
+
+        $month = $committedAt !== null
+            ? JalaliCalendar::monthKey($committedAt)
+            : JalaliCalendar::monthKey(now(JalaliCalendar::timezone()));
+
+        $row = CommitScore::query()->updateOrCreate(
+            [
+                'sha' => $sha,
+                'repo' => $repo,
+            ],
+            [
+                'login' => $commit['login'] ?? null,
+                'email' => $commit['email'] ?? null,
+                'name' => $commit['name'] ?? null,
+                'message' => mb_substr((string) ($commit['message'] ?? ''), 0, 5000),
+                'score' => $scoredResult['score'],
+                'committed_at' => $committedAt,
+                'month' => $month,
+            ]
+        );
+
+        if ((int) $scoredResult['score'] > 0) {
+            try {
+                app(StreakCompetitionService::class)->maybeAnnounceOvertake(
+                    isset($commit['email']) ? (string) $commit['email'] : null,
+                    isset($commit['name']) ? (string) $commit['name'] : null,
+                );
+            } catch (Throwable $exception) {
+                report($exception);
+            }
+        }
+
+        return $row;
+    }
+
+    /**
      * @return array{scored: int, skipped: list<array{repo: string, reason: string}>}
      */
     private function syncRecentLocked(Carbon $from, Carbon $to, string $month): array
