@@ -19,5 +19,8 @@ return [
     'quality_min_desc' => (int) env('CLICKUP_QUALITY_MIN_DESC', 20),
     'poll_interval_seconds' => (int) env('CLICKUP_POLL_INTERVAL', 10),
     'poll_lookback_minutes' => (int) env('CLICKUP_POLL_LOOKBACK_MINUTES', 30),
+    'backup_lookback_days' => (int) env('CLICKUP_BACKUP_LOOKBACK_DAYS', 7),
+    'backup_tasks_per_run' => (int) env('CLICKUP_BACKUP_TASKS_PER_RUN', 3),
     'cron_token' => env('CLICKUP_CRON_TOKEN'),
 ];
+

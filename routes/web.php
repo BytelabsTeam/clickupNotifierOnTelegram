@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\BackupMissedTasksCronController;
 use App\Http\Controllers\ClickUpPollCronController;
 use App\Http\Controllers\GitHubCommitsCronController;
 use App\Http\Controllers\GitHubScoreCronController;
@@ -15,6 +16,7 @@ Route::get('/', function () {
 });
 
 Route::get('/cron/clickup-poll', ClickUpPollCronController::class);
+Route::get('/cron/clickup-backup-missed', BackupMissedTasksCronController::class);
 Route::get('/cron/github-commits', GitHubCommitsCronController::class);
 Route::get('/cron/github-score-commits', GitHubScoreCronController::class);
 Route::get('/cron/tomorrow-tasks', TomorrowTasksCronController::class);
