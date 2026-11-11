@@ -174,6 +174,10 @@ class TelegramNotifier
 
         Http::asForm()->post("https://api.telegram.org/bot{$token}/setMyCommands", [
             'commands' => json_encode([
+                ['command' => 'punch', 'description' => 'شروع کار (punch in)'],
+                ['command' => 'punchout', 'description' => 'پایان کار (punch out)'],
+                ['command' => 'status', 'description' => 'وضعیت جلسه کار'],
+                ['command' => 'stat', 'description' => 'لینک آمار کار (ادمین)'],
                 ['command' => 'menu', 'description' => 'منوی مدیریت تسک‌ها'],
                 ['command' => 'task', 'description' => 'ساخت تسک از متن فارسی'],
                 ['command' => 'newtask', 'description' => 'ایجاد تسک ساده'],

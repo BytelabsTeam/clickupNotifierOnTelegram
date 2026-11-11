@@ -47,45 +47,20 @@ class MorningCheckInTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_cron_sends_morning_greeting_with_mentions_and_button(): void
+    public function test_cron_morning_checkin_is_disabled(): void
     {
-        Http::fake([
-            'api.telegram.org/*' => Http::response([
-                'ok' => true,
-                'result' => ['message_id' => 501],
-            ], 200),
-        ]);
+        Http::fake();
 
         $response = $this->get('/cron/morning-checkin?token=secret-cron-token');
 
         $response->assertOk()->assertJson([
             'status' => 'ok',
-            'sent' => true,
-            'message_id' => 501,
-            'work_date' => '2026-10-27',
-            'mentions' => 2,
+            'sent' => false,
+            'disabled' => true,
         ]);
 
-        Http::assertSent(function ($request) {
-            if ($request->url() !== 'https://api.telegram.org/bot123456:telegram-token/sendMessage') {
-                return false;
-            }
-
-            $text = (string) $request['text'];
-            $markup = json_decode((string) $request['reply_markup'], true);
-
-            return str_contains($text, 'صبح بخیر')
-                && str_contains($text, '@ali_telegram')
-                && str_contains($text, '@sara_telegram')
-                && ($markup['inline_keyboard'][0][0]['text'] ?? null) === 'شروع کار'
-                && ($markup['inline_keyboard'][0][0]['callback_data'] ?? null) === 'work_start';
-        });
-
-        $stored = MorningCheckinMessage::query()->first();
-        $this->assertNotNull($stored);
-        $this->assertSame('2026-10-27', $stored->work_date->toDateString());
-        $this->assertSame(self::GROUP_CHAT_ID, $stored->chat_id);
-        $this->assertSame(501, $stored->message_id);
+        Http::assertNothingSent();
+        $this->assertDatabaseCount('morning_checkin_messages', 0);
     }
 
     public function test_cron_rejects_invalid_token(): void

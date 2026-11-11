@@ -2,13 +2,12 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\NotifyMorningCheckIn;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class MorningCheckInCronController extends Controller
 {
-    public function __invoke(Request $request, NotifyMorningCheckIn $notifier): JsonResponse
+    public function __invoke(Request $request): JsonResponse
     {
         $token = config('clickup.cron_token');
 
@@ -20,24 +19,12 @@ class MorningCheckInCronController extends Controller
             abort(403, 'Invalid cron token.');
         }
 
-        try {
-            $result = $notifier->notify();
-        } catch (\Throwable $exception) {
-            report($exception);
-
-            return response()->json([
-                'status' => 'error',
-                'message' => $exception->getMessage(),
-            ], 500);
-        }
-
+        // Morning broadcast disabled — users punch themselves via /punch.
         return response()->json([
             'status' => 'ok',
-            'sent' => $result['sent'],
-            'message_id' => $result['message_id'],
-            'work_date' => $result['work_date'],
-            'mentions' => $result['mentions'],
-            'timezone' => $result['timezone'],
+            'sent' => false,
+            'disabled' => true,
+            'message' => 'Morning check-in broadcast is disabled; use /punch instead.',
             'checked_at' => now()->toIso8601String(),
         ]);
     }

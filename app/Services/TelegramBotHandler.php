@@ -16,6 +16,7 @@ class TelegramBotHandler
         private readonly NaturalLanguageTaskService $naturalLanguageTaskService,
         private readonly NotifyMorningCheckIn $morningCheckIn,
         private readonly PersonalMorningDashboardService $personalMorningDashboardService,
+        private readonly PunchService $punchService,
         private readonly ScoreBreakdownService $scoreBreakdownService,
         private readonly StreakCompetitionService $streakCompetitionService,
         private readonly TaskMenuService $taskMenuService,
@@ -97,6 +98,12 @@ class TelegramBotHandler
         }
 
         if ($command === null) {
+            return;
+        }
+
+        if (in_array($command, ['punch', 'punchout', 'status', 'stat'], true)) {
+            $this->handlePunchCommand($command, $from, $chatId, $threadId);
+
             return;
         }
 
@@ -203,6 +210,12 @@ class TelegramBotHandler
             return;
         }
 
+        if ($this->punchService->isPunchCallback($data)) {
+            $this->handlePunchCallback($callbackId, $data, $from, $message, $chatId, (int) $messageId);
+
+            return;
+        }
+
         if ($this->taskMenuService->isMenuCallback($data)
             || $this->assignActionService->isAssignCallback($data)
             || $this->taskQualityGateService->isQualityCallback($data)
@@ -214,6 +227,126 @@ class TelegramBotHandler
         }
 
         $this->telegramNotifier->answerCallbackQuery($callbackId);
+    }
+
+    /**
+     * @param  array{id?: int|string, username?: string, first_name?: string, last_name?: string}  $from
+     */
+    private function handlePunchCommand(
+        string $command,
+        array $from,
+        string|int $chatId,
+        string|int|null $threadId,
+    ): void {
+        try {
+            if ($command === 'punch') {
+                $result = $this->punchService->punchIn($from, 'command');
+                $messageId = $this->telegramNotifier->replyWithInlineKeyboard(
+                    $chatId,
+                    $result['text'],
+                    $result['keyboard'],
+                    $threadId
+                );
+
+                if ($result['ok'] && $result['session'] !== null) {
+                    $this->punchService->attachMessage($result['session'], $chatId, $messageId);
+                }
+
+                return;
+            }
+
+            if ($command === 'punchout') {
+                $result = $this->punchService->punchOut($from, 'command');
+                $this->telegramNotifier->reply($chatId, $result['text'], $threadId);
+
+                return;
+            }
+
+            if ($command === 'status') {
+                $this->telegramNotifier->reply($chatId, $this->punchService->statusText($from), $threadId);
+
+                return;
+            }
+
+            if ($command === 'stat') {
+                $result = $this->punchService->createStatLink($from);
+
+                if (! $result['ok']) {
+                    $this->telegramNotifier->reply($chatId, $result['text'], $threadId);
+
+                    return;
+                }
+
+                $userId = (int) ($from['id'] ?? 0);
+
+                if ($userId > 0) {
+                    $this->telegramNotifier->reply($userId, $result['text']);
+                }
+
+                if ((string) $chatId !== (string) $userId) {
+                    $this->telegramNotifier->reply($chatId, 'لینک آمار برات تو پیوی ارسال شد.', $threadId);
+                }
+
+                return;
+            }
+        } catch (\Throwable $exception) {
+            report($exception);
+            $this->telegramNotifier->reply(
+                $chatId,
+                'خطا در punch: '.$this->publicError($exception),
+                $threadId
+            );
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $from
+     * @param  array<string, mixed>  $message
+     */
+    private function handlePunchCallback(
+        string $callbackId,
+        string $data,
+        array $from,
+        array $message,
+        string|int $chatId,
+        int $messageId,
+    ): void {
+        if (! $this->isAuthorizedCallback($message, $from)) {
+            $this->telegramNotifier->answerCallbackQuery($callbackId, 'اجازه دسترسی نداری.', true);
+
+            return;
+        }
+
+        try {
+            if ($data === PunchService::CALLBACK_STILL) {
+                $result = $this->punchService->stillWorking($from);
+                $this->telegramNotifier->answerCallbackQuery($callbackId, $result['toast'], ! $result['ok']);
+                $this->telegramNotifier->edit(
+                    $chatId,
+                    $messageId,
+                    $result['text'],
+                    ['inline_keyboard' => $result['keyboard']]
+                );
+
+                return;
+            }
+
+            $result = $this->punchService->punchOut($from, 'button');
+            $this->telegramNotifier->answerCallbackQuery($callbackId, $result['toast'], ! $result['ok']);
+            $this->telegramNotifier->edit(
+                $chatId,
+                $messageId,
+                $result['text'],
+                ['inline_keyboard' => []]
+            );
+        } catch (\Throwable $exception) {
+            report($exception);
+            $this->telegramNotifier->answerCallbackQuery(
+                $callbackId,
+                'خطا: '.$this->publicError($exception),
+                true
+            );
+        }
     }
 
     /**
@@ -500,6 +633,12 @@ class TelegramBotHandler
         return implode("\n", [
             'ربات ClickUp 👋',
             '',
+            'حضور و کار:',
+            '/punch — شروع کار',
+            '/punchout — پایان کار',
+            '/status — وضعیت جلسه و جمع امروز',
+            '/stat — لینک آمار (فقط ادمین)',
+            '',
             'مدیریت با دکمه شیشه‌ای:',
             '/menu — منوی تسک‌ها، امتیاز، استریک',
             '/newtask — ایجاد تسک ساده',
@@ -519,8 +658,6 @@ class TelegramBotHandler
             '/scoresweek — جزئیات امتیاز این هفته',
             '/scoresmonth — جزئیات امتیاز این ماه',
             '/help — همین راهنما',
-            '',
-            'صبح با «شروع کار» داشبورد شخصی در چت خصوصی می‌آید.',
         ]);
     }
 
@@ -537,6 +674,9 @@ class TelegramBotHandler
                 'new', 'create' => 'newtask',
                 'manage' => 'menu',
                 'streak', 'streaks' => 'streaks',
+                'punch_in', 'punchin' => 'punch',
+                'punch_out' => 'punchout',
+                'stats' => 'stat',
                 default => strtolower($matches[1]),
             };
         }
@@ -559,6 +699,10 @@ class TelegramBotHandler
             'امتیاز امروز', 'جزئیات امتیاز امروز' => 'scoresday',
             'امتیاز هفته', 'جزئیات امتیاز هفته' => 'scoresweek',
             'امتیاز ماه', 'جزئیات امتیاز ماه' => 'scoresmonth',
+            'پانچ', 'شروع کار' => 'punch',
+            'خروج', 'پایان کار', 'پانچ اوت' => 'punchout',
+            'وضعیت', 'وضعیت کار' => 'status',
+            'آمار', 'آمار کار' => 'stat',
             'راهنما', 'کمک' => 'help',
             default => null,
         };
