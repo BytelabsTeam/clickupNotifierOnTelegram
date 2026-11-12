@@ -103,7 +103,7 @@ class SelfDeployService
             $sourceRoot = $this->extractZipball($zipPath, $extractPath);
             $copied = $this->overlayFromDirectory($sourceRoot, base_path());
 
-            $composerStatus = $this->maybeComposerInstall();
+            // No shell_exec/exec: shared hosts often disable them. vendor/ stays as-is.
             $migrateStatus = $this->runArtisan('migrate', ['--force' => true]);
             $clearStatus = $this->runArtisan('optimize:clear');
             $webhookStatus = $this->reregisterWebhook();
@@ -114,7 +114,7 @@ class SelfDeployService
                 "ریپو: {$repo}",
                 "شاخه: {$branch}",
                 "فایل‌های کپی‌شده: {$copied}",
-                "Composer: {$composerStatus}",
+                'Vendor: حفظ شد (بدون composer)',
                 "Migrate: {$migrateStatus}",
                 "Cache clear: {$clearStatus}",
                 "Webhook: {$webhookStatus}",
@@ -292,52 +292,6 @@ class SelfDeployService
         }
 
         return $root;
-    }
-
-    private function maybeComposerInstall(): string
-    {
-        $composer = $this->findComposerBinary();
-
-        if ($composer === null) {
-            return 'رد شد (composer روی سرور نیست؛ vendor حفظ شد)';
-        }
-
-        $command = escapeshellarg($composer)
-            .' install --no-dev --no-interaction --optimize-autoloader';
-
-        $output = [];
-        $exitCode = 0;
-        exec('cd '.escapeshellarg(base_path()).' && '.$command.' 2>&1', $output, $exitCode);
-
-        if ($exitCode !== 0) {
-            Log::warning('Composer install during deploy failed', [
-                'exit' => $exitCode,
-                'output' => implode("\n", array_slice($output, -20)),
-            ]);
-
-            return 'ناموفق (exit '.$exitCode.') — vendor قبلی حفظ شده';
-        }
-
-        return 'OK';
-    }
-
-    private function findComposerBinary(): ?string
-    {
-        foreach (['composer', 'composer.phar'] as $candidate) {
-            $resolved = trim((string) shell_exec('command -v '.escapeshellarg($candidate).' 2>/dev/null'));
-
-            if ($resolved !== '' && is_executable($resolved)) {
-                return $resolved;
-            }
-        }
-
-        $localPhar = base_path('composer.phar');
-
-        if (is_file($localPhar)) {
-            return PHP_BINARY.' '.$localPhar;
-        }
-
-        return null;
     }
 
     private function runArtisan(string $command, array $parameters = []): string

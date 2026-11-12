@@ -59,7 +59,7 @@ POST /api/webhooks/telegram
 
 ادمین‌های مشخص‌شده در `DEPLOY_ADMIN_IDS` (پیش‌فرض: `103063134` و `1080648232`) می‌توانند در **پیوی خصوصی** ربات دستور `/deploy` بزنند. ربات zip آخرین کد را از `DEPLOY_GITHUB_REPO` / `DEPLOY_GITHUB_BRANCH` (با `GITHUB_TOKEN`) می‌گیرد و روی همین هاست overlay می‌کند.
 
-حفظ می‌شود و overwrite نمی‌شود: `.env` / `.env.*`، `storage/`، `vendor/`، `database/*.sqlite`، `.git/`، `node_modules/`. بعد از کپی: `migrate --force`، `optimize:clear`، و ثبت دوباره وبهوک. اگر `composer` روی سرور باشد، `composer install --no-dev` هم اجرا می‌شود.
+حفظ می‌شود و overwrite نمی‌شود: `.env` / `.env.*`، `storage/`، `vendor/`، `database/*.sqlite`، `.git/`، `node_modules/`. بعد از کپی: `migrate --force`، `optimize:clear`، و ثبت دوباره وبهوک — همه‌چیز فقط با PHP (بدون `shell_exec`/`exec`). برای تغییر dependencyها باید `vendor` را جداگانه روی سرور آپدیت کنید.
 
 این دستور در منوی BotFather و `/help` نیست.
 
