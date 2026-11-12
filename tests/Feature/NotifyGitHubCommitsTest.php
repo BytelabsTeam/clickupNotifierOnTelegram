@@ -70,7 +70,7 @@ class NotifyGitHubCommitsTest extends TestCase
             ], 200),
             'iranrouter.net/api/v1/chat/completions' => Http::response([
                 'choices' => [
-                    ['message' => ['content' => 'رفع باگ لاگین']],
+                    ['message' => ['content' => 'ببین داش، باگ لاگین رو حسابی درآورد و تمومش کرد.']],
                 ],
             ], 200),
             'api.telegram.org/*' => Http::response(['ok' => true], 200),
@@ -85,7 +85,7 @@ class NotifyGitHubCommitsTest extends TestCase
                 return false;
             }
 
-            $expected = "عارف توسعه داد:\nرفع باگ لاگین\n#MegaShop";
+            $expected = "عارف توسعه داد:\nببین داش، باگ لاگین رو حسابی درآورد و تمومش کرد.\n#MegaShop";
 
             return ($request['text'] ?? null) === $expected;
         });

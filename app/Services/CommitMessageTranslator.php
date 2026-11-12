@@ -20,14 +20,50 @@ class CommitMessageTranslator
             return $text;
         }
 
-        // فقط خط اول (عنوان) کامیت را برای تلگرام نگه دار؛ بدنه را حذف کن
-        $subject = $this->subjectLine($text);
+        return $this->summarizeCached($text);
+    }
 
-        if ($this->looksMostlyPersian($subject)) {
-            return $subject;
+    private function summarizeCached(string $text): string
+    {
+        $cacheKey = 'commit_translate:iranrouter:v2:dash-mashti:'.sha1(mb_strtolower($text));
+
+        return Cache::remember($cacheKey, now()->addDays(30), function () use ($text): string {
+            return $this->summarize($text);
+        });
+    }
+
+    private function summarize(string $text): string
+    {
+        try {
+            $summarized = $this->iranRouterClient->chat([
+                [
+                    'role' => 'system',
+                    'content' => implode("\n", [
+                        'تو خلاصه‌نویس نوتیف کامیت گیت برای گروه تلگرام تیم هستی.',
+                        'متن کامل پیام کامیت را بخوان و در یک پاراگراف کوتاه فارسی خلاصه‌اش کن (حدود ۲ تا ۴ جمله؛ نه یک خط خشک، نه چند پاراگراف).',
+                        'لحن: داش‌مشتی / لات قدیم تهرانی — صمیمی، رک، باحال، با حس رفاقت و مردانگی خوب‌طینت؛ مثل داش‌های قدیم محل.',
+                        'از واژه‌هایی مثل داش، مشتی، داداش، ببین، حسابی، تمومش کرد، یه کاری کرد، درآورد، جمعش کرد استفاده کن وقتی طبیعی است؛ اجباری نیست همه را پشت سر هم بچپانی.',
+                        'فحش، توهین، لحن زننده یا لاتی مبتذل ممنوع. رسمی و کتابی هم نباش.',
+                        'فقط همان یک پاراگراف را برگردان — بدون عنوان، بدون گیومه، بدون بولت، بدون توضیح اضافه.',
+                        'اگر پیام انگلیسی است، خلاصه را فارسی بنویس. اصطلاحات فنی را قابل‌فهم نگه دار.',
+                    ]),
+                ],
+                [
+                    'role' => 'user',
+                    'content' => $text,
+                ],
+            ], 400);
+
+            $summarized = trim($summarized, " \t\n\r\0\x0B\"'«»");
+            $summarized = preg_replace("/\r\n|\r|\n+/", ' ', $summarized) ?? $summarized;
+            $summarized = trim(preg_replace('/\s+/u', ' ', $summarized) ?? $summarized);
+
+            return $summarized !== '' ? $summarized : $this->subjectLine($text);
+        } catch (Throwable $exception) {
+            Log::warning('Commit summary failed: '.$exception->getMessage());
+
+            return $this->subjectLine($text);
         }
-
-        return $this->translateCached($subject);
     }
 
     private function subjectLine(string $text): string
@@ -35,51 +71,5 @@ class CommitMessageTranslator
         $parts = preg_split("/\r\n|\n|\r/", $text, 2);
 
         return trim((string) ($parts[0] ?? $text));
-    }
-
-    private function looksMostlyPersian(string $text): bool
-    {
-        $persian = preg_match_all('/[\x{0600}-\x{06FF}]/u', $text) ?: 0;
-        $latin = preg_match_all('/[A-Za-z]/', $text) ?: 0;
-
-        return $persian > 0 && $persian >= $latin;
-    }
-
-    private function translateCached(string $text): string
-    {
-        $cacheKey = 'commit_translate:iranrouter:v1:'.sha1(mb_strtolower($text));
-
-        return Cache::remember($cacheKey, now()->addDays(30), function () use ($text): string {
-            return $this->translate($text);
-        });
-    }
-
-    private function translate(string $text): string
-    {
-        try {
-            $translated = $this->iranRouterClient->chat([
-                [
-                    'role' => 'system',
-                    'content' => implode("\n", [
-                        'You translate Git commit subject lines into natural Persian (Farsi).',
-                        'Return ONLY the Persian translation — no quotes, no explanation, no extra lines.',
-                        'Keep technical terms readable when a common Persian equivalent does not exist.',
-                        'If the text is already Persian, return it unchanged.',
-                    ]),
-                ],
-                [
-                    'role' => 'user',
-                    'content' => $text,
-                ],
-            ], 200);
-
-            $translated = trim($translated, " \t\n\r\0\x0B\"'«»");
-
-            return $translated !== '' ? $translated : $text;
-        } catch (Throwable $exception) {
-            Log::warning('Commit translation failed: '.$exception->getMessage());
-
-            return $text;
-        }
     }
 }
