@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Jobs\FinishSelfDeploy;
 use App\Jobs\FinishTelegramLeaderboard;
 use Illuminate\Support\Facades\Cache;
 
@@ -18,6 +19,7 @@ class TelegramBotHandler
         private readonly PersonalMorningDashboardService $personalMorningDashboardService,
         private readonly PunchService $punchService,
         private readonly ScoreBreakdownService $scoreBreakdownService,
+        private readonly SelfDeployService $selfDeployService,
         private readonly StreakCompetitionService $streakCompetitionService,
         private readonly TaskMenuService $taskMenuService,
         private readonly TaskQualityGateService $taskQualityGateService,
@@ -54,6 +56,19 @@ class TelegramBotHandler
             return;
         }
 
+        $threadId = $message['message_thread_id'] ?? null;
+        $threadId = is_numeric($threadId) ? $threadId : null;
+        $from = is_array($message['from'] ?? null) ? $message['from'] : [];
+        $fromUsername = (string) ($from['username'] ?? '');
+        $text = trim((string) ($message['text'] ?? $message['caption'] ?? ''));
+        $command = $text !== '' ? $this->parseCommand($text) : null;
+
+        if ($command === 'deploy') {
+            $this->handleDeployCommand($message, $from, $chatId);
+
+            return;
+        }
+
         if (! $this->isAuthorized($message)) {
             if (($message['chat']['type'] ?? '') === 'private') {
                 $this->telegramNotifier->reply($chatId, 'اجازه دسترسی به این ربات را نداری.');
@@ -61,11 +76,6 @@ class TelegramBotHandler
 
             return;
         }
-
-        $threadId = $message['message_thread_id'] ?? null;
-        $threadId = is_numeric($threadId) ? $threadId : null;
-        $from = is_array($message['from'] ?? null) ? $message['from'] : [];
-        $fromUsername = (string) ($from['username'] ?? '');
 
         if (isset($message['voice']) && is_array($message['voice'])) {
             $this->telegramNotifier->reply(
@@ -77,13 +87,9 @@ class TelegramBotHandler
             return;
         }
 
-        $text = trim((string) ($message['text'] ?? $message['caption'] ?? ''));
-
         if ($text === '') {
             return;
         }
-
-        $command = $this->parseCommand($text);
 
         if ($command === null && $this->taskMenuService->hasPendingCompose($from)) {
             $this->handleComposeMessage($from, $text, $chatId, $threadId);
@@ -150,6 +156,41 @@ class TelegramBotHandler
         }
 
         $this->telegramNotifier->reply($chatId, $reply, $threadId);
+    }
+
+    public function completeDeploy(string|int $chatId, ?int $progressMessageId): void
+    {
+        $result = $this->selfDeployService->run();
+        $this->selfDeployService->reportResult($chatId, $progressMessageId, $result);
+    }
+
+    /**
+     * @param  array<string, mixed>  $message
+     * @param  array<string, mixed>  $from
+     */
+    private function handleDeployCommand(array $message, array $from, string|int $chatId): void
+    {
+        if (($message['chat']['type'] ?? '') !== 'private') {
+            return;
+        }
+
+        $userId = (int) ($from['id'] ?? 0);
+
+        if (! $this->selfDeployService->isAdmin($userId)) {
+            $this->telegramNotifier->reply($chatId, 'اجازه دسترسی به این ربات را نداری.');
+
+            return;
+        }
+
+        if ($this->selfDeployService->isLocked()) {
+            $this->telegramNotifier->reply($chatId, 'آپدیت دیگری در جریانه. کمی بعد دوباره /deploy بزن.');
+
+            return;
+        }
+
+        $progressId = $this->telegramNotifier->reply($chatId, 'در حال آپدیت از گیت‌هاب…');
+
+        FinishSelfDeploy::dispatchAfterResponse($chatId, $progressId);
     }
 
     public function completeLeaderboard(
