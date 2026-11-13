@@ -200,11 +200,14 @@ php artisan github:score-commits
 php artisan clickup:score-tasks
 ```
 
-یا Cron URL برای کامیت‌ها:
+یا Cron URL برای کامیت‌ها و تسک‌های غیرکدی:
 
 ```
 https://yourdomain.com/clickup_notif_on_telegram/cron/github-score-commits?token=CLICKUP_CRON_TOKEN
+https://yourdomain.com/clickup_notif_on_telegram/cron/clickup-score-tasks?token=CLICKUP_CRON_TOKEN
 ```
+
+امتیاز تسک Done حتی اگر گیت کیفیت جشن را بلاک کند ثبت می‌شود؛ کرون `clickup-score-tasks` هم تسک‌های Done ماه جاری که هنوز امتیاز ندارند را پر می‌کند.
 
 بعد از تغییر دستورها یک‌بار وبهوک را دوباره ست کنید تا منوی ربات به‌روز شود.
 

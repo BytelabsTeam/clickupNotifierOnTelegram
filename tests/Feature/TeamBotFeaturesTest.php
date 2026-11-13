@@ -3,9 +3,11 @@
 namespace Tests\Feature;
 
 use App\Models\CommitScore;
+use App\Models\TaskScore;
 use App\Models\WorkStart;
 use App\Services\PollClickUpDoneTasks;
 use App\Services\StreakCompetitionService;
+use App\Services\TaskScoreSyncService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
@@ -140,6 +142,18 @@ class TeamBotFeaturesTest extends TestCase
 
     public function test_quality_gate_blocks_thin_done_task(): void
     {
+        $score = new TaskScore([
+            'task_id' => 'thin_done',
+            'score' => 0,
+            'is_code' => false,
+        ]);
+
+        $this->mock(TaskScoreSyncService::class, function ($mock) use ($score): void {
+            $mock->shouldReceive('scoreTaskIfNeeded')
+                ->once()
+                ->andReturn($score);
+        });
+
         Http::fake(function ($request) {
             if (str_contains($request->url(), 'api.telegram.org')) {
                 return Http::response(['ok' => true, 'result' => ['message_id' => 11]], 200);

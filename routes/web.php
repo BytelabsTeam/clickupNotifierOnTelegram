@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\BackupMissedTasksCronController;
 use App\Http\Controllers\ClickUpPollCronController;
+use App\Http\Controllers\ClickUpScoreCronController;
 use App\Http\Controllers\GitHubCommitsCronController;
 use App\Http\Controllers\GitHubScoreCronController;
 use App\Http\Controllers\MorningCheckInCronController;
@@ -21,6 +22,7 @@ Route::get('/punch/stats/{token}', PunchStatsController::class)->where('token', 
 
 Route::get('/cron/clickup-poll', ClickUpPollCronController::class);
 Route::get('/cron/clickup-backup-missed', BackupMissedTasksCronController::class);
+Route::get('/cron/clickup-score-tasks', ClickUpScoreCronController::class);
 Route::get('/cron/github-commits', GitHubCommitsCronController::class);
 Route::get('/cron/github-score-commits', GitHubScoreCronController::class);
 Route::get('/cron/tomorrow-tasks', TomorrowTasksCronController::class);

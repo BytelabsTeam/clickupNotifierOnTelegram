@@ -71,6 +71,8 @@ class TaskQualityGateService
             $result = $this->evaluate($task);
 
             if (! $result['pass']) {
+                // Quality gate only blocks celebration — scoring still runs for Done work.
+                $this->scoreDoneTask($task, $email, $username);
                 $this->sendGateMessage($task, $result['reasons'], $email, $username);
 
                 return ['sent' => true, 'gated' => true];
@@ -184,7 +186,14 @@ class TaskQualityGateService
         $message = $this->telegramNotifier->formatMessage($displayName, $taskName, $projectTag);
         $media = $this->clickUpClient->extractMediaAttachments($task['attachments'] ?? []);
         $this->telegramNotifier->send($message, $media);
+        $this->scoreDoneTask($task, $email, $username);
+    }
 
+    /**
+     * @param  array<string, mixed>  $task
+     */
+    private function scoreDoneTask(array $task, ?string $email, ?string $username): void
+    {
         try {
             $score = $this->taskScoreSyncService->scoreTaskIfNeeded($task, $email, $username);
 
