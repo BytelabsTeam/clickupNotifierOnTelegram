@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Models\CommitScore;
+use App\Services\CommitScoreSyncService;
 use App\Services\PollGitHubCommits;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -39,6 +41,16 @@ class NotifyGitHubCommitsTest extends TestCase
 
     public function test_it_notifies_new_commits_translated_to_persian(): void
     {
+        $this->mock(CommitScoreSyncService::class, function ($mock): void {
+            $mock->shouldReceive('scoreCommitIfNeeded')
+                ->once()
+                ->andReturn(new CommitScore([
+                    'sha' => 'abc123',
+                    'repo' => 'BytelabsTeam/MegaShop',
+                    'score' => 1550,
+                ]));
+        });
+
         Http::fake([
             'api.github.com/repos/BytelabsTeam/MegaShop/commits*' => Http::response([
                 [
@@ -85,9 +97,13 @@ class NotifyGitHubCommitsTest extends TestCase
                 return false;
             }
 
-            $expected = "عارف توسعه داد:\nببین داداش، اون باگ تخمی لاگین رو حسابی گایید و تمومش کرد.\n#MegaShop";
+            $expected = "عارف توسعه داد:\nببین داداش، اون باگ تخمی لاگین رو حسابی گایید و تمومش کرد.\n#MegaShop\nامتیاز: 1550";
 
             return ($request['text'] ?? null) === $expected;
+        });
+
+        $this->mock(CommitScoreSyncService::class, function ($mock): void {
+            $mock->shouldReceive('scoreCommitIfNeeded')->never();
         });
 
         $this->assertSame(0, app(PollGitHubCommits::class)->poll());

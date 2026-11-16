@@ -219,7 +219,10 @@ https://yourdomain.com/clickup_notif_on_telegram/cron/clickup-score-tasks?token=
 عارف توسعه داد:
 ببین داداش، اون باگ تخمی لاگین رو حسابی گایید و تمومش کرد. دیگه اون کصشر گیر نمی‌ده.
 #MegaShop
+امتیاز: 1550
 ```
+
+امتیاز همان لحظهٔ نوتیف با LLM محاسبه و در پیام می‌آید (اگر امتیاز ۰ باشد خط امتیاز حذف می‌شود).
 
 نام فارسی از همان `CLICKUP_USER_NAMES` + `GITHUB_USER_LOGINS` گرفته می‌شود.
 
@@ -247,6 +250,7 @@ php artisan github:poll-commits --loop --interval=60
 GITHUB_COMMIT_POLL_LOOKBACK_MINUTES=15
 GITHUB_COMMIT_POLL_INTERVAL=60
 TELEGRAM_COMMIT_MESSAGE_TEMPLATE="{name} توسعه داد:\n{message}\n#{repo}"
+# اختیاری: اگر {score} در قالب باشد همان‌جا جایگزین می‌شود؛ وگرنه خط «امتیاز: N» اضافه می‌شود
 ```
 
 اولین بار فقط بازهٔ `LOOKBACK` اخیر را می‌گیرد تا گروه با تاریخچه پر نشود.

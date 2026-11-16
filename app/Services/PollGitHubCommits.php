@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Throwable;
 
 class PollGitHubCommits
 {
@@ -14,6 +15,7 @@ class PollGitHubCommits
         private readonly UserNameResolver $userNameResolver,
         private readonly CommitMessageTranslator $translator,
         private readonly TelegramNotifier $telegramNotifier,
+        private readonly CommitScoreSyncService $commitScoreSyncService,
     ) {
     }
 
@@ -39,10 +41,12 @@ class PollGitHubCommits
             $identity = $this->identity($commit['login'], $commit['email'], $commit['name']);
             $displayName = $this->userNameResolver->resolve($identity['email'], $identity['username']);
             $translated = $this->translator->toPersian($commit['message']);
+            $score = $this->scoreCommit($commit);
             $message = $this->telegramNotifier->formatCommitMessage(
                 $displayName,
                 $translated,
-                $commit['repo_name']
+                $commit['repo_name'],
+                $score,
             );
 
             $this->telegramNotifier->send($message);
@@ -52,6 +56,34 @@ class PollGitHubCommits
         Cache::put(self::LAST_CHECK_CACHE_KEY, $to->toIso8601String(), now()->addDays(30));
 
         return $notifiedCount;
+    }
+
+    /**
+     * @param  array{
+     *     sha: string,
+     *     repo: string,
+     *     login: ?string,
+     *     email: ?string,
+     *     name: ?string,
+     *     message: string,
+     *     committed_at: string
+     * }  $commit
+     */
+    private function scoreCommit(array $commit): ?int
+    {
+        try {
+            $row = $this->commitScoreSyncService->scoreCommitIfNeeded($commit);
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return null;
+        }
+
+        if ($row === null) {
+            return null;
+        }
+
+        return (int) $row->score;
     }
 
     private function resolveSince(): Carbon
