@@ -26,18 +26,25 @@ class IranRouterClient
             $payload['max_tokens'] = $maxTokens;
         }
 
+        $options = [
+            // 301/302 from www → apex otherwise downgrades POST to GET (IranRouter 405).
+            'allow_redirects' => [
+                'max' => 5,
+                'strict' => true,
+                'referer' => true,
+                'protocols' => ['https'],
+            ],
+        ];
+
+        $proxy = $this->proxyUrl();
+        if ($proxy !== null) {
+            $options['proxy'] = $proxy;
+        }
+
         $response = Http::withToken($apiKey)
             ->acceptJson()
             ->asJson()
-            ->withOptions([
-                // 301/302 from www → apex otherwise downgrades POST to GET (IranRouter 405).
-                'allow_redirects' => [
-                    'max' => 5,
-                    'strict' => true,
-                    'referer' => true,
-                    'protocols' => ['https'],
-                ],
-            ])
+            ->withOptions($options)
             ->timeout($timeout)
             ->connectTimeout(10)
             ->post("{$baseUrl}/chat/completions", $payload);
@@ -74,5 +81,36 @@ class IranRouterClient
 
         // www host 301s to apex; without strict redirects POST becomes GET → 405.
         return str_replace('://www.iranrouter.net', '://iranrouter.net', $baseUrl);
+    }
+
+    /**
+     * Build a Guzzle proxy URL when AI_PROXY_HOST is set; otherwise null (direct).
+     */
+    private function proxyUrl(): ?string
+    {
+        $host = trim((string) config('iranrouter.proxy.host', ''));
+        if ($host === '') {
+            return null;
+        }
+
+        $port = trim((string) config('iranrouter.proxy.port', ''));
+        $user = (string) config('iranrouter.proxy.user', '');
+        $pass = (string) config('iranrouter.proxy.pass', '');
+
+        $authority = $host;
+        if ($port !== '') {
+            $authority .= ':'.$port;
+        }
+
+        if ($user !== '') {
+            $auth = rawurlencode($user);
+            if ($pass !== '') {
+                $auth .= ':'.rawurlencode($pass);
+            }
+
+            return "http://{$auth}@{$authority}";
+        }
+
+        return "http://{$authority}";
     }
 }
